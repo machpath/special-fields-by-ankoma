@@ -148,3 +148,36 @@ def _session_apkg(tmp_path_factory, name, legacy):
         col.close()
     time.sleep(0.05)
     return path
+
+
+@pytest.fixture(scope="session")
+def sched_apkg(tmp_path_factory):
+    """Three Basic notes, every card reviewed once by the author, exported
+    with scheduling (review history) and deck presets. Built before any user
+    collection exists, like `_session_apkg`."""
+    import time
+
+    from anki.collection import Collection, DeckIdLimit, ExportAnkiPackageOptions
+
+    d = tmp_path_factory.mktemp("author-sched")
+    col = Collection(str(d / "a.anki2"))
+    did = col.decks.id("Progress Deck")
+    nt = col.models.by_name("Basic")
+    for i in range(3):
+        note = col.new_note(nt)
+        note["Front"] = "progress front %d" % i
+        note["Back"] = "back"
+        col.add_note(note, did)
+    for cid in sorted(col.db.list("select id from cards")):
+        card = col.get_card(cid)
+        card.start_timer()
+        col.sched.answerCard(card, 3)
+    path = str(d / "with progress.apkg")
+    col.export_anki_package(
+        out_path=path,
+        options=ExportAnkiPackageOptions(with_scheduling=True, with_deck_configs=True, with_media=True, legacy=False),
+        limit=DeckIdLimit(did),
+    )
+    col.close()
+    time.sleep(0.05)
+    return path

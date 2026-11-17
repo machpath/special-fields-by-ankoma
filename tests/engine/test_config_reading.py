@@ -38,3 +38,41 @@ def test_protected_tags_single_string_and_junk():
     assert c.settings_from_config({"protected_tags": "#edited"}).protected_tags == ("#edited",)
     assert c.settings_from_config({"protected_tags": ["a", " A ", 3, ""]}).protected_tags == ("a",)
     assert c.settings_from_config({"protected_tags": {"x": 1}}).protected_tags == ()
+
+
+def test_import_switches_default_off_and_old_configs_load():
+    assert c.default_settings().import_scheduling is False
+    assert c.default_settings().import_deck_presets is False
+    cfg = c.default_config()
+    assert cfg["import_scheduling"] is False and cfg["import_deck_presets"] is False
+    # Saved by an earlier beta: neither key present.
+    old = {"config_version": 1, "fields": [{"name": "Text", "keep": True}],
+           "protected_tags": ["#edited"], "update_note_types": False}
+    s = c.settings_from_config(old)
+    assert s.import_scheduling is False and s.import_deck_presets is False
+    assert s.update_note_types is False and s.keeps_field("text")
+
+
+def test_import_switches_read_tolerantly():
+    for key in ("import_scheduling", "import_deck_presets"):
+        assert getattr(c.settings_from_config({key: "yes"}), key) is True
+        assert getattr(c.settings_from_config({key: 1}), key) is True
+        assert getattr(c.settings_from_config({key: " Off "}), key) is False
+        assert getattr(c.settings_from_config({key: "banana"}), key) is False
+        assert getattr(c.settings_from_config({key: None}), key) is False
+
+
+def test_import_switches_round_trip():
+    s = c.Settings(fields=(), import_scheduling=True, import_deck_presets=True)
+    cfg = c.settings_to_config(s)
+    assert cfg["import_scheduling"] is True and cfg["import_deck_presets"] is True
+    assert c.settings_from_config(cfg) == s
+
+
+def test_shipped_config_json_is_the_default_config():
+    import json
+    import os
+
+    path = os.path.join(os.path.dirname(c.__file__), "config.json")
+    with open(path, encoding="utf-8") as f:
+        assert json.load(f) == c.default_config()

@@ -242,6 +242,37 @@ def test_summary_rows_other_reasons_counted_without_unchanged():
     assert flow.skip_details_text(r) == "Note type conflict: 2 · Missing deck: 1"
 
 
+def test_question_shows_learning_progress_and_preset_rows(question):
+    assert [r[0] for r in ROWS][-2:] == ["Learning progress", "Deck presets"]
+    assert dict(ROWS)["Learning progress"] == "Not imported"
+    assert dict(ROWS)["Deck presets"] == "Not imported"
+    import dataclasses
+    on = choices_summary(dataclasses.replace(default_settings(), import_scheduling=True,
+                                             import_deck_presets=True))
+    dlg = question(rows=on)
+    labels = _texts(dlg, "choice_label")
+    values = _texts(dlg, "choice_value")
+    assert labels[-2:] == ["Learning progress", "Deck presets"]
+    assert values[-2:] == ["Imported for new cards", "Imported"]
+    assert dlg.findChild(QLabel, "keep_note").text() == (
+        "Your review history, and any cards you moved to other decks, are always kept."
+    )
+
+
+def test_summary_rows_learning_progress_only_when_imported():
+    assert flow.summary_rows(_result(cards_with_progress=0)) == COUNTS + FIXED
+    r = _result(learning_progress_imported=True, cards_with_progress=12)
+    assert flow.summary_rows(r) == COUNTS + FIXED + [("New cards with learning progress", "12")]
+    r = _result(learning_progress_imported=True)
+    assert flow.summary_rows(r)[-1] == ("New cards with learning progress", "0")
+
+
+def test_summary_dialog_learning_progress_row(summary):
+    dlg = summary(_result(learning_progress_imported=True, cards_with_progress=5))
+    assert _texts(dlg, "row_label")[-2:] == ["Review history and deck moves", "New cards with learning progress"]
+    assert _texts(dlg, "row_value")[-2:] == ["Unchanged", "5"]
+
+
 def test_summary_rows_zero_reason_ignored():
     r = _result(notes_skipped=0, skip_reasons={"note type conflict": 0})
     assert flow.summary_rows(r) == COUNTS + FIXED

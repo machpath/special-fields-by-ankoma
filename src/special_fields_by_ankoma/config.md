@@ -3,3 +3,5 @@ Use **Tools → Special Fields by Ankoma** to change these settings. Editing the
 - `fields`: the fields listed in the settings window. `"keep": true` keeps your version of that field when a deck update changes it; `false` takes the update's version. Fields are matched by name.
 - `protected_tags`: tags an update never removes from your notes. All other tags on an updated note are replaced by the update's tags.
 - `update_note_types`: `true` lets an update replace card templates and styling; `false` keeps yours.
+- `import_scheduling`: `true` lets cards that are new to your collection arrive with the learning progress (scheduling and review history) stored in the file; cards you already have always keep your own progress. `false` (the default): new cards arrive as new.
+- `import_deck_presets`: `true` imports the deck option presets stored in the file: presets you don't have yet are added, and decks in the file are switched to the preset the file gives them (unless the file gives the Default preset). Presets you already have are never changed. `false` (the default): no presets are imported and no deck changes its preset.

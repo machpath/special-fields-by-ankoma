@@ -19,7 +19,8 @@ note, then puts back what the user chose to keep:
    `_clean_merge_leftovers`);
 7. when the user keeps their card styling, make sure templates and CSS of
    existing note types are exactly as before;
-8. merge every undo entry made since step 1 into one, and return the result.
+8. prove the result (rule 12 gate) or roll everything back;
+9. merge every undo entry made since step 1 into one, and return the result.
 
 Runs headless and inside aqt's `CollectionOp` background thread: it imports
 nothing from `aqt`. Python 3.9 compatible.
@@ -118,7 +119,7 @@ class _Snapshot:
     (note type id, raw fields, raw tags), every note type's fields and
     template ids, and the ids of all cards."""
 
-    __slots__ = ("notes", "fields", "templates", "card_ids", "cards", "revlog")
+    __slots__ = ("notes", "fields", "templates", "card_ids", "cards", "revlog", "orphan_revlog")
 
     def __init__(
         self,
@@ -127,6 +128,7 @@ class _Snapshot:
         templates: Dict[int, Set[Any]],
         cards: Dict[int, Tuple[Any, ...]],
         revlog: Tuple[Any, ...],
+        orphan_revlog: Optional[Dict[int, List[int]]] = None,
     ) -> None:
         self.notes = notes
         self.fields = fields
@@ -134,6 +136,10 @@ class _Snapshot:
         self.cards = cards  # card id -> _CARD_COLS values (ord last)
         self.card_ids = set(cards)
         self.revlog = revlog  # _REVLOG_SUM aggregate
+        # Only when the file's scheduling is imported: card id -> ids of the
+        # review log rows of cards that no longer exist (deleted cards keep
+        # their history). A card new to the collection may get such an id.
+        self.orphan_revlog = orphan_revlog
 
 
 def run_import(col: Collection, path: str, settings: Settings) -> ImportResult:
@@ -171,7 +177,7 @@ def _run(
     prefs = {key: col.get_config(key, _MISSING) for key in IMPORT_PREF_KEYS}
     scm_before = col.db.scalar("select scm from col")
     styling = None if settings.update_note_types else _snapshot_styling(col)
-    snap = _snapshot(col)
+    snap = _snapshot(col, settings.import_scheduling)
     res.seconds["snapshot"] = time.perf_counter() - t0
 
     # --- native import ----------------------------------------------------------
@@ -186,13 +192,16 @@ def _run(
             # author's update would be skipped silently.
             update_notes=ALWAYS,
             update_notetypes=ALWAYS if settings.update_note_types else NEVER,
-            # The importer never modifies existing cards; these only affect
-            # cards/decks new to the collection. False/False never brings in
-            # the author's review history or overwrites the user's deck
-            # options presets. (Anki's saved import preferences are not
-            # exposed by a public Collection API on 25.02-26.11.)
-            with_scheduling=False,
-            with_deck_configs=False,
+            # The user's own choices, both off by default. The importer never
+            # changes a card that already exists, nor its review log: with
+            # scheduling, only cards new to the collection arrive with the
+            # file's scheduling and review log rows (gates G2/G3 check it).
+            # With deck presets, presets the collection lacks are added and
+            # decks in the file switch to the file's preset unless that is
+            # the Default one; existing presets are never changed (verified
+            # on 25.02.7 to 26.11b1).
+            with_scheduling=bool(settings.import_scheduling),
+            with_deck_configs=bool(settings.import_deck_presets),
         ),
     )
     out = col.import_anki_package(request)
@@ -226,8 +235,10 @@ def _run(
         _restore_styling(col, styling)
     _restore_import_prefs(col, prefs)
     t3 = time.perf_counter()
-    _gate(col, snap, updated)  # rule 12: raises MergeRepairError
+    progress = _gate(col, snap, updated)  # rule 12: raises MergeRepairError
     res.seconds["gate"] = time.perf_counter() - t3
+    res.learning_progress_imported = bool(settings.import_scheduling)
+    res.cards_with_progress = progress if settings.import_scheduling else 0
     res.note_types_changed = col.db.scalar("select scm from col") != scm_before
     res.changes = col.merge_undo_entries(undo_pos)
     res.seconds["restore"] = time.perf_counter() - t2
@@ -244,7 +255,7 @@ def _notetype_fields(col: Collection) -> Dict[int, _FieldInfo]:
     return out
 
 
-def _snapshot(col: Collection) -> _Snapshot:
+def _snapshot(col: Collection, with_scheduling: bool = False) -> _Snapshot:
     """One SQL pass over every note: note type id, fields and tags as stored.
 
     Everything is needed whatever the settings: rule 10 follows notes the
@@ -253,7 +264,9 @@ def _snapshot(col: Collection) -> _Snapshot:
     for the notes the import updates. Every card's scheduling columns and an
     aggregate of the review log (two more cheap queries) are what the rule
     12 gate compares against; card ids also let the merge clean-up tell
-    cards this import created from the user's."""
+    cards this import created from the user's. When the file's scheduling
+    is imported, the ids of review log rows whose card no longer exists
+    are kept too (one more query, for G3)."""
     notes: Dict[int, Tuple[int, str, str]] = {}
     for nid, mid, flds, tags in col.db.execute("select id, mid, flds, tags from notes"):
         notes[nid] = (mid, flds, tags)
@@ -261,15 +274,22 @@ def _snapshot(col: Collection) -> _Snapshot:
     for nt in col.models.all():
         templates[int(nt["id"])] = {t.get("id") for t in nt["tmpls"] if t.get("id")}
     cards = {row[0]: tuple(row[1:]) for row in col.db.execute("select id, %s from cards" % _CARD_COLS)}
-    return _Snapshot(notes, _notetype_fields(col), templates, cards, _revlog_sum(col))
+    orphans: Optional[Dict[int, List[int]]] = None
+    if with_scheduling:
+        orphans = {}
+        for cid, rid in col.db.execute("select cid, id from revlog where cid not in (select id from cards)"):
+            orphans.setdefault(cid, []).append(rid)
+    return _Snapshot(notes, _notetype_fields(col), templates, cards, _revlog_sum(col), orphans)
 
 
 # Card columns rule 12 (G2) compares; `ord` must stay last.
 _CARD_COLS = "nid, did, odid, due, odue, ivl, factor, reps, lapses, left, queue, type, flags, data, ord"
 
 # An order-independent aggregate of every revlog column (G3): the importer
-# never touches the review log, so any change shows here. Modulo keeps the
-# integer sums far from overflow on any realistic review log.
+# never changes or removes a review log row, so any change shows here. Every
+# value is a sum over rows (or a count), so the aggregate of a subset of rows
+# can be subtracted. Modulo keeps the integer sums far from overflow on any
+# realistic review log.
 _REVLOG_SUM = (
     "select count(), coalesce(sum(id % 1000003), 0), coalesce(sum(id % 999983), 0), "
     "coalesce(sum(cid % 1000003), 0), coalesce(sum(usn), 0), coalesce(sum(ease), 0), "
@@ -279,8 +299,12 @@ _REVLOG_SUM = (
 )
 
 
-def _revlog_sum(col: Collection) -> Tuple[Any, ...]:
-    return tuple(col.db.first(_REVLOG_SUM))
+def _revlog_sum(col: Collection, where: str = "") -> Tuple[Any, ...]:
+    return tuple(col.db.first(_REVLOG_SUM + where))
+
+
+def _ids_sql(ids: Sequence[int]) -> str:
+    return ",".join(str(int(i)) for i in ids)
 
 
 def _snapshot_styling(col: Collection) -> Dict[int, Tuple[str, List[Dict[str, Any]]]]:
@@ -522,10 +546,19 @@ def _examples(ids: Sequence[int]) -> str:
     return ", ".join(str(i) for i in list(ids)[:3])
 
 
-def _gate(col: Collection, snap: _Snapshot, updated: Set[int]) -> None:
+def _gate(col: Collection, snap: _Snapshot, updated: Set[int]) -> int:
     """Contract rule 12: check G1-G4 against the pre-import snapshot; raise
     MergeRepairError (run_import then rolls everything back) on the first
-    invariant that does not hold.
+    invariant that does not hold. Returns the number of cards new to the
+    collection that did not arrive as new cards (learning progress from the
+    file; always 0 unless scheduling was imported).
+
+    G3: every review log row that existed before is still there, unchanged.
+    Without the file's scheduling (`snap.orphan_revlog` is None) no row may
+    be added: the whole review log must be as before. With it, rows may be
+    added only for cards new to the collection: the review log without the
+    rows of new cards, plus the pre-import rows of deleted cards whose id a
+    new card got back, must equal the review log before.
 
     G4 is read as rule 12 intends it ("must never fire on a correct
     import"): a new card on a note the import did not update is a failure
@@ -559,6 +592,8 @@ def _gate(col: Collection, snap: _Snapshot, updated: Set[int]) -> None:
     # G2 and G4
     changed: List[int] = []
     new_cards: List[int] = []
+    added_cards: List[int] = []
+    progress = 0
     post_cards: Set[int] = set()
     template_ids: Dict[Optional[int], List[Any]] = {}
     known_templates: Set[Any] = set()
@@ -578,6 +613,9 @@ def _gate(col: Collection, snap: _Snapshot, updated: Set[int]) -> None:
                 if pre_note is None or pre_note[0] == post_mid.get(nid):
                     changed.append(cid)  # template changed without a note type move
             continue
+        added_cards.append(cid)
+        if vals[-4]:  # `type`: not a new card
+            progress += 1
         nid = vals[0]
         pre_note = snap.notes.get(nid)
         if pre_note is None or nid in updated:
@@ -597,11 +635,27 @@ def _gate(col: Collection, snap: _Snapshot, updated: Set[int]) -> None:
         raise MergeRepairError("", "G2: %d existing card(s) lost or changed, e.g. card %s"
                                % (len(changed) + len(lost), _examples(lost + changed)))
     # G3
-    if _revlog_sum(col) != snap.revlog:
+    if not _revlog_kept(col, snap, added_cards):
         raise MergeRepairError("", "G3: the review log changed")
     if new_cards:
         raise MergeRepairError("", "G4: %d new card(s) on notes the update did not contain, e.g. card %s"
                                % (len(new_cards), _examples(new_cards)))
+    return progress
+
+
+def _revlog_kept(col: Collection, snap: _Snapshot, added_cards: Sequence[int]) -> bool:
+    """G3 (see `_gate`). `added_cards`: ids of the cards new to the
+    collection. A few aggregate queries; the rows of new cards are only
+    looked at when scheduling was imported."""
+    total = _revlog_sum(col)
+    if snap.orphan_revlog is None or not added_cards:
+        return total == snap.revlog
+    added = _revlog_sum(col, " where cid in (%s)" % _ids_sql(added_cards))
+    reused: List[int] = []
+    for cid in added_cards:
+        reused.extend(snap.orphan_revlog.get(cid, ()))
+    back = _revlog_sum(col, " where id in (%s)" % _ids_sql(reused)) if reused else (0,) * len(total)
+    return tuple(t - a + b for t, a, b in zip(total, added, back)) == snap.revlog
 
 
 # --- note type merge clean-up (rule 10b) --------------------------------------------

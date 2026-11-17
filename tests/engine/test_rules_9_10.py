@@ -555,8 +555,8 @@ def test_rule10g_duplicate_card_existed_before(tmp_path, monkeypatch):
 
     real = engine._snapshot
 
-    def snapshot(col):
-        snap = real(col)
+    def snapshot(col, *args):
+        snap = real(col, *args)
         snap.card_ids = Everything(snap.card_ids)
         return snap
 

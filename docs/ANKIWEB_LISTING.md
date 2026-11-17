@@ -30,9 +30,14 @@ Built for the [Ankoma](https://ankomapath.com) pathology deck. Works with any de
 - **Tags.** Updates replace a note's tags with the author's. Protect the tags you want to keep and an update will never remove them.
 - **Card templates and styling.** Choose whether updates can change how your existing cards look.
 
+### Optional, off by default
+
+- **Import learning progress.** Cards that are new to your collection arrive with the scheduling and review history stored in the file. Cards you already have keep your own progress.
+- **Import deck presets.** Presets in the file that you don't have yet are added and the file's decks use them. Presets you already have are never changed.
+
 ### Always kept
 
-- Your review history.
+- Your review history, and the progress of every card you already have.
 - The decks you moved cards into.
 
 ### Also

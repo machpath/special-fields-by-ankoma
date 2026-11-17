@@ -13,6 +13,11 @@ from special_fields_by_ankoma.config import (
 from special_fields_by_ankoma.model import ACCENT_COLOR, FieldChoice, Settings
 from special_fields_by_ankoma.settings_dialog import (
     KEEP_LABEL,
+    PRESETS_HEADING,
+    PRESETS_HELP,
+    SCHEDULING_HEADING,
+    SCHEDULING_HELP,
+    STYLING_HELP,
     TAGS_HELP,
     TAKE_LABEL,
     WINDOW_TITLE,
@@ -454,17 +459,78 @@ def test_styling_switch(make_dialog):
     assert sw.accessibleName() == "Update card templates and styling"
 
 
+def test_import_switches_default_off(make_dialog):
+    dlg = make_dialog()
+    for sw in (dlg.scheduling_switch, dlg.presets_switch):
+        assert type(sw) is type(dlg.styling_switch)
+        assert not sw.isChecked()
+    got = dlg.result_settings()
+    assert got.import_scheduling is False and got.import_deck_presets is False
+
+
+def test_import_switches_toggle_and_labels(make_dialog):
+    dlg = make_dialog()
+    sw = dlg.scheduling_switch
+    QTest.mouseClick(sw, Qt.MouseButton.LeftButton)
+    assert sw.isChecked() and dlg.result_settings().import_scheduling is True
+    assert dlg.result_settings().import_deck_presets is False
+    sw = dlg.presets_switch
+    sw.setFocus()
+    QTest.keyClick(sw, Qt.Key.Key_Space)
+    assert sw.isChecked() and dlg.result_settings().import_deck_presets is True
+    QTest.mouseClick(dlg.scheduling_switch, Qt.MouseButton.LeftButton)
+    assert dlg.result_settings().import_scheduling is False
+    assert dlg.scheduling_switch.accessibleName() == SCHEDULING_HEADING == "Import learning progress"
+    assert dlg.presets_switch.accessibleName() == PRESETS_HEADING == "Import deck presets"
+    # Heading and help shown as plain text, in the same kind of row as the styling switch.
+    from aqt.qt import QLabel
+    texts = {lab.text(): lab for lab in dlg.findChildren(QLabel)}
+    for text in (SCHEDULING_HEADING, SCHEDULING_HELP, PRESETS_HEADING, PRESETS_HELP, STYLING_HELP):
+        assert text in texts, text
+        assert texts[text].textFormat() == Qt.TextFormat.PlainText
+    assert "Cards you already have always keep your own progress" in SCHEDULING_HELP
+    assert "never changed" in PRESETS_HELP
+
+
+def test_import_switches_come_from_settings_and_save(make_dialog):
+    s = dataclasses.replace(default_settings(), import_scheduling=True)
+    dlg = make_dialog(settings=s)
+    assert dlg.scheduling_switch.isChecked() and not dlg.presets_switch.isChecked()
+    QTest.mouseClick(dlg.presets_switch, Qt.MouseButton.LeftButton)
+    QTest.mouseClick(dlg.save_button, Qt.MouseButton.LeftButton)
+    got = dlg.result_settings()
+    assert got == dataclasses.replace(default_settings(), import_scheduling=True, import_deck_presets=True)
+    assert settings_from_config(settings_to_config(got)) == got
+
+
+def test_switch_tab_order(make_dialog):
+    """Tab goes styling -> learning progress -> deck presets -> Restore defaults."""
+    dlg = make_dialog()
+    order = [dlg.styling_switch, dlg.scheduling_switch, dlg.presets_switch, dlg.restore_button]
+    dlg.styling_switch.setFocus()
+    QApplication.processEvents()
+    for here, there in zip(order, order[1:]):
+        assert QApplication.focusWidget() is here, QApplication.focusWidget()
+        QTest.keyClick(here, Qt.Key.Key_Tab)
+        QApplication.processEvents()
+        assert QApplication.focusWidget() is there, (here.objectName(), QApplication.focusWidget())
+
+
 def test_restore_defaults(make_dialog):
     s = Settings(
         fields=(FieldChoice("Text", True), FieldChoice("Remarks", True)),
         protected_tags=("#edited",),
         update_note_types=False,
+        import_scheduling=True,
+        import_deck_presets=True,
     )
     dlg = make_dialog(settings=s)
+    assert dlg.scheduling_switch.isChecked() and dlg.presets_switch.isChecked()
     dlg.open_field_picker()
     type_into(dlg.tag_input, "boa")
     QTest.mouseClick(dlg.restore_button, Qt.MouseButton.LeftButton)
     assert dlg.result_settings() == default_settings()
+    assert not dlg.scheduling_switch.isChecked() and not dlg.presets_switch.isChecked()
     assert dlg.tag_chips() == [] and dlg.tag_input.text() == ""
     assert not dlg.field_picker.isVisible()
     assert [r.name for r in dlg.field_rows()] == [n for n, _k in DEFAULT_FIELDS]
@@ -524,7 +590,7 @@ def test_every_control_reachable_by_tab(make_dialog):
         w = w.nextInFocusChain()
     tabbable = {id(x) for x in chain if x.focusPolicy() & Qt.FocusPolicy.TabFocus}
     wanted = [dlg.add_field_button, dlg.tag_input, dlg.tag_list,
-              dlg.styling_switch, dlg.restore_button, dlg.cancel_button, dlg.save_button,
+              dlg.styling_switch, dlg.scheduling_switch, dlg.presets_switch, dlg.restore_button, dlg.cancel_button, dlg.save_button,
               dlg.row_for("Remarks").remove_button, dlg.tag_chips()[0].remove_button]
     for row in dlg.field_rows():
         wanted += [row.toggle.keep_button, row.toggle.take_button]
@@ -562,6 +628,8 @@ def test_field_rows_are_findable_by_object_name(make_dialog):
     assert [r.property("field_name") for r in rows] == [n for n, _ in DEFAULT_FIELDS]
     assert dlg.findChild(QWidget, "tag_input") is dlg.tag_input
     assert dlg.findChild(QWidget, "styling_switch") is dlg.styling_switch
+    assert dlg.findChild(QWidget, "scheduling_switch") is dlg.scheduling_switch
+    assert dlg.findChild(QWidget, "presets_switch") is dlg.presets_switch
 
 
 # --------------------------------------------------------------------------

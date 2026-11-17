@@ -61,6 +61,7 @@ CUSTOM = Settings(
     fields=(FieldChoice("Text", True), FieldChoice("Remarks", False), FieldChoice("Personal Notes", True)),
     protected_tags=("#edited", "board-review::missed"),
     update_note_types=False,
+    import_scheduling=True,
 )
 
 
@@ -99,7 +100,23 @@ def test_save_then_load_round_trip():
     ]
     assert written["protected_tags"] == ["#edited", "board-review::missed"]
     assert written["update_note_types"] is False
+    assert written["import_scheduling"] is True
+    assert written["import_deck_presets"] is False
     assert sd.load_settings(mw) == CUSTOM
+
+
+def test_import_switches_round_trip_and_old_config():
+    for sched, presets in ((True, True), (False, True), (True, False), (False, False)):
+        mw = fake_mw(default_config())
+        s = Settings(fields=(), import_scheduling=sched, import_deck_presets=presets)
+        sd.save_settings(mw, s)
+        assert sd.load_settings(mw) == s
+    # A config saved by an earlier beta has neither key: both off.
+    old = default_config()
+    del old["import_scheduling"], old["import_deck_presets"]
+    loaded = sd.load_settings(fake_mw(old))
+    assert loaded.import_scheduling is False and loaded.import_deck_presets is False
+    assert loaded == default_settings()
 
 
 def test_save_keeps_unknown_keys():
@@ -138,6 +155,8 @@ def test_choices_summary_defaults():
         ("Protected tags", "None"),
         ("Tags", "Replaced with the update's"),
         ("Card styling", "Update"),
+        ("Learning progress", "Not imported"),
+        ("Deck presets", "Not imported"),
     ]
 
 
@@ -147,6 +166,16 @@ def test_choices_summary_custom():
         ("Protected tags", "#edited, board-review::missed"),
         ("Tags", "Replaced with the update's"),
         ("Card styling", "Keep mine"),
+        ("Learning progress", "Imported for new cards"),
+        ("Deck presets", "Not imported"),
+    ]
+
+
+def test_choices_summary_deck_presets_on():
+    s = Settings(fields=(), import_deck_presets=True)
+    assert sd.choices_summary(s)[-2:] == [
+        ("Learning progress", "Not imported"),
+        ("Deck presets", "Imported"),
     ]
 
 

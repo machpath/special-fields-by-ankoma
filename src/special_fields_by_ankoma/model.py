@@ -56,6 +56,8 @@ class Settings:
     fields: Tuple[FieldChoice, ...] = ()
     protected_tags: Tuple[str, ...] = ()
     update_note_types: bool = True  # card templates and styling
+    import_scheduling: bool = False  # Anki's "Import any learning progress"
+    import_deck_presets: bool = False  # Anki's "Import any deck presets"
 
     def kept_field_names(self) -> FrozenSet[str]:
         """Normalized names of the fields whose local value is kept."""
@@ -81,6 +83,8 @@ class ImportResult:
     protected_tags_kept: int = 0  # tag occurrences put back
     notes_with_tags_kept: int = 0
     note_types_changed: bool = False  # True -> the next sync is a full sync
+    learning_progress_imported: bool = False  # the file's scheduling was imported
+    cards_with_progress: int = 0  # cards new to the collection that arrived not new
     skip_reasons: Dict[str, int] = field(default_factory=dict)
     seconds: Dict[str, float] = field(default_factory=dict)
     changes: object = None  # anki OpChanges, for aqt's CollectionOp

@@ -27,5 +27,7 @@
     }
   ],
   "protected_tags": [],
-  "update_note_types": true
+  "update_note_types": true,
+  "import_scheduling": false,
+  "import_deck_presets": false
 }

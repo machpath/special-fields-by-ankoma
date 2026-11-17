@@ -18,6 +18,8 @@ Widgets carry objectNames so tests and other workstreams can find them:
     remove_tag_button the ✕ on a chip
     tag_input, tag_list, tag_hint
     styling_switch    "Update card templates and styling"
+    scheduling_switch "Import learning progress"
+    presets_switch    "Import deck presets"
     restore_button, cancel_button, save_button
 """
 
@@ -60,6 +62,18 @@ STYLING_HEADING = "Update card templates and styling"
 STYLING_HELP = (
     "On: an update may replace your card templates and styling. "
     "Off: yours are kept exactly as they are. Note content updates either way."
+)
+SCHEDULING_HEADING = "Import learning progress"
+SCHEDULING_HELP = (
+    "On: cards that are new to your collection arrive with the scheduling and "
+    "review history stored in the file. Cards you already have always keep "
+    "your own progress. Off: new cards arrive as new."
+)
+PRESETS_HEADING = "Import deck presets"
+PRESETS_HELP = (
+    "On: presets from the file that you don't have yet are added, and decks in "
+    "the file switch to the file's preset (unless that is Default). Presets you "
+    "already have are never changed. Off: no presets are imported."
 )
 ON_TEXT = "#FFFFFF"
 
@@ -151,6 +165,11 @@ def choices_summary(settings: Settings) -> List[Tuple[str, str]]:
         ),
         ("Tags", "Replaced with the update's"),
         ("Card styling", "Update" if settings.update_note_types else "Keep mine"),
+        (
+            "Learning progress",
+            "Imported for new cards" if settings.import_scheduling else "Not imported",
+        ),
+        ("Deck presets", "Imported" if settings.import_deck_presets else "Not imported"),
     ]
 
 
@@ -606,7 +625,16 @@ class SettingsDialog(QDialog):
 
         lay.addLayout(self._build_fields_section())
         lay.addLayout(self._build_tags_section())
-        lay.addLayout(self._build_styling_section())
+        # The three switch rows sit a little closer together than sections.
+        switches = QVBoxLayout()
+        switches.setSpacing(12)
+        switches.addLayout(self._build_styling_section())
+        self.scheduling_switch, row = self._switch_row(
+            SCHEDULING_HEADING, SCHEDULING_HELP, "scheduling_switch")
+        switches.addLayout(row)
+        self.presets_switch, row = self._switch_row(PRESETS_HEADING, PRESETS_HELP, "presets_switch")
+        switches.addLayout(row)
+        lay.addLayout(switches)
         lay.addStretch(1)
 
         # Bottom bar (outside the scroll area so it is always visible).
@@ -751,19 +779,24 @@ class SettingsDialog(QDialog):
         return sec
 
     def _build_styling_section(self) -> QHBoxLayout:
+        self.styling_switch, row = self._switch_row(STYLING_HEADING, STYLING_HELP, "styling_switch")
+        return row
+
+    def _switch_row(self, heading: str, help_text: str, name: str) -> Tuple[ToggleSwitch, QHBoxLayout]:
+        """A heading, a muted help line and a switch on the right."""
         row = QHBoxLayout()
         row.setSpacing(12)
         text = QVBoxLayout()
         text.setSpacing(2)
-        text.addWidget(self._heading(STYLING_HEADING))
-        text.addWidget(self._muted_label(STYLING_HELP))
+        text.addWidget(self._heading(heading))
+        text.addWidget(self._muted_label(help_text))
         row.addLayout(text, 1)
-        self.styling_switch = ToggleSwitch(self._colors, self)
-        self.styling_switch.setObjectName("styling_switch")
-        self.styling_switch.setAccessibleName(STYLING_HEADING)
-        self.styling_switch.setToolTip(STYLING_HEADING)
-        row.addWidget(self.styling_switch, 0, Qt.AlignmentFlag.AlignVCenter)
-        return row
+        switch = ToggleSwitch(self._colors, self)
+        switch.setObjectName(name)
+        switch.setAccessibleName(heading)
+        switch.setToolTip(heading)
+        row.addWidget(switch, 0, Qt.AlignmentFlag.AlignVCenter)
+        return switch, row
 
     def _size_to_content(self) -> None:
         self.body.adjustSize()
@@ -786,6 +819,8 @@ class SettingsDialog(QDialog):
         self._tags = list(settings.protected_tags)
         self._rebuild_chips()
         self.styling_switch.setChecked(bool(settings.update_note_types))
+        self.scheduling_switch.setChecked(bool(settings.import_scheduling))
+        self.presets_switch.setChecked(bool(settings.import_deck_presets))
         self.tag_input.clear()
         self._set_tag_hint("")
         self.close_field_picker()
@@ -801,6 +836,8 @@ class SettingsDialog(QDialog):
             fields=tuple(r.choice() for r in self._rows),
             protected_tags=tuple(self._tags),
             update_note_types=self.styling_switch.isChecked(),
+            import_scheduling=self.scheduling_switch.isChecked(),
+            import_deck_presets=self.presets_switch.isChecked(),
         )
 
     def accept(self) -> None:

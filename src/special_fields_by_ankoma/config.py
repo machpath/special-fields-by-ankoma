@@ -29,6 +29,8 @@ def default_settings() -> Settings:
         fields=tuple(FieldChoice(name, keep) for name, keep in DEFAULT_FIELDS),
         protected_tags=(),
         update_note_types=True,
+        import_scheduling=False,
+        import_deck_presets=False,
     )
 
 
@@ -38,6 +40,8 @@ def settings_to_config(settings: Settings) -> Dict[str, Any]:
         "fields": [{"name": f.name, "keep": bool(f.keep)} for f in settings.fields],
         "protected_tags": list(settings.protected_tags),
         "update_note_types": bool(settings.update_note_types),
+        "import_scheduling": bool(settings.import_scheduling),
+        "import_deck_presets": bool(settings.import_deck_presets),
     }
 
 
@@ -120,4 +124,7 @@ def settings_from_config(cfg: Optional[Dict[str, Any]]) -> Settings:
         fields=fields,
         protected_tags=_read_tags(cfg.get("protected_tags")),
         update_note_types=_read_bool(cfg.get("update_note_types"), defaults.update_note_types),
+        # Missing in configs saved before these choices existed: off.
+        import_scheduling=_read_bool(cfg.get("import_scheduling"), defaults.import_scheduling),
+        import_deck_presets=_read_bool(cfg.get("import_deck_presets"), defaults.import_deck_presets),
     )

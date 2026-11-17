@@ -189,6 +189,7 @@ def test_change_choices_opens_real_settings_then_question_again(wired, qapp):
     def in_settings(sdlg):
         log["settings_parent"] = sdlg.parent()
         sdlg.styling_switch.setChecked(False)  # "Card styling: Keep mine"
+        sdlg.scheduling_switch.setChecked(True)  # "Learning progress: Imported for new cards"
         sdlg.row_for("Extra").toggle.set_keep(True)
         QTest.mouseClick(sdlg.save_button, Qt.MouseButton.LeftButton)
 
@@ -208,10 +209,15 @@ def test_change_choices_opens_real_settings_then_question_again(wired, qapp):
     assert log["visible_after"] is True
     after = dict(log["after"])
     assert after["Card styling"] == "Keep mine"
+    assert dict(log["before"])["Learning progress"] == "Not imported"
+    assert after["Learning progress"] == "Imported for new cards"
+    assert after["Deck presets"] == "Not imported"
     assert after["Fields you keep"] == "Extra, Personal Notes"
     assert mw.addonManager.writes, "settings were saved through addonManager"
     assert len(engine_calls) == 1
     assert engine_calls[0][2].update_note_types is False
+    assert engine_calls[0][2].import_scheduling is True
+    assert engine_calls[0][2].import_deck_presets is False
     assert original == []
 
 
@@ -275,6 +281,46 @@ def test_engine_runs_in_collection_op_and_summary_then_done(fake_mw, pristine_im
     # aqt's on_op_finished ran (undo menu refreshed) before the summary
     assert seen["undo_actions_updated_before_summary"] >= 1
     assert mw.col.undo_status().undo == UNDO_LABEL  # Done does not undo
+
+
+@pytest.mark.parametrize("on", [True, False])
+def test_learning_progress_row_only_when_switched_on(fake_mw, pristine_importer, sched_apkg, qapp, on):
+    """Real engine, file with the author's review history: with "Import
+    learning progress" on, the summary says how many new cards arrived with
+    it, right after the fixed rows; off, there is no such row and the cards
+    arrive as new."""
+    from special_fields_by_ankoma.config import default_config
+
+    importing = pristine_importer
+    mw = fake_mw
+    mw.addonManager.config = dict(default_config(), import_scheduling=on)
+    flow.setup(mw)
+    seen = {}
+
+    def in_question(dlg):
+        seen["question"] = dict(dlg.rows())
+        QTest.mouseClick(dlg.import_button, Qt.MouseButton.LeftButton)
+
+    def in_summary(dlg):
+        seen["rows"] = dlg.rows()
+        QTest.mouseClick(dlg.done_button, Qt.MouseButton.LeftButton)
+
+    when_shown("special_fields_question", in_question)
+    importing.import_file(mw, sched_apkg)
+    when_shown("special_fields_summary", in_summary)
+    assert _wait(qapp, lambda: "rows" in seen)
+    assert seen["question"]["Learning progress"] == ("Imported for new cards" if on else "Not imported")
+    labels = [r[0] for r in seen["rows"]]
+    assert labels.index("Review history and deck moves") == labels.index("Tags") + 1
+    assert dict(seen["rows"])["Review history and deck moves"] == "Unchanged"
+    if on:
+        assert labels[-1] == "New cards with learning progress"
+        assert seen["rows"][-1][1] == "3"
+        assert mw.col.db.scalar("select count() from revlog") == 3
+    else:
+        assert "New cards with learning progress" not in labels
+        assert mw.col.db.scalar("select count() from cards where type != 0") == 0
+        assert mw.col.db.scalar("select count() from revlog") == 0
 
 
 def test_summary_undo_reverts_the_import(fake_mw, pristine_importer, apkg, qapp, monkeypatch):

@@ -69,6 +69,7 @@ FIXED_SUMMARY_ROWS: Tuple[Tuple[str, str], ...] = (
     ("Tags", "Replaced with the update's"),
     ("Review history and deck moves", "Unchanged"),
 )
+PROGRESS_LABEL = "New cards with learning progress"
 FULL_SYNC_NOTICE = (
     "This update changed a note type, so your next sync will be a one-way "
     "full sync. Choose “Upload to AnkiWeb” so this computer's "
@@ -126,13 +127,17 @@ def summary_rows(result: ImportResult) -> List[Tuple[str, str]]:
 
     `ImportResult.summary_rows()` without its "Notes skipped" row; a
     "Notes skipped" row is added back only when reasons other than
-    "unchanged" add up to more than zero, with that sum. Then the fixed rows.
+    "unchanged" add up to more than zero, with that sum. Then the fixed rows,
+    and, only when learning progress was imported, how many new cards
+    arrived with it.
     """
     rows = [r for r in result.summary_rows() if r[0] != SKIPPED_LABEL]
     skipped = sum(n for _reason, n in skip_details(result))
     if skipped > 0:
         rows.append((SKIPPED_LABEL, str(skipped)))
     rows.extend(FIXED_SUMMARY_ROWS)
+    if result.learning_progress_imported:
+        rows.append((PROGRESS_LABEL, str(result.cards_with_progress)))
     return rows
 
 
