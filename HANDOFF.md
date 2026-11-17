@@ -1,8 +1,8 @@
 # HANDOFF: how to pick this build up
 
-**To resume in a new chat:** open a chat in the "Special Fields Add on for Ankoma" project with this folder connected, and say: *"Read HANDOFF.md in my Special Fields Add On folder and continue the build."*
+**To resume in a new chat:** open a chat in the "Special Fields Add on for Ankoma" project and say: *"Continue the Special Fields build from HANDOFF.md in the machpath/special-fields-by-ankoma GitHub repository."* (The same file is in the Desktop folder `Anki Add Ons\Special Fields Add On`.)
 
-This file is updated at every checkpoint. The copy in this folder is the source of truth between sessions; the cloud workspace a session builds in is temporary.
+This file is updated at every checkpoint. The GitHub repository and this folder are the record between sessions; the cloud workspace a session builds in is temporary.
 
 ## What this is
 
@@ -52,7 +52,7 @@ If a file named above or in the status table is missing here, that work had not 
 3. Manual pass in desktop Anki on a COPY of a profile (question appears for double-click, drag-and-drop and File → Import; progress bar; undo label; sync), then the author's beta with a real v1.3.
 4. Release: author reviews `docs/USER_GUIDE.md` and `docs/ANKIWEB_LISTING.md` (support link points to the machpath repository's Issues page), uploads to AnkiWeb; ankomapath.com page after the author approves its content.
 
-GitHub: the author wants this hosted under the GitHub account `machpath`. The orchestrator created the public, empty repository https://github.com/machpath/special-fields-by-ankoma on 2026-11-16 at the author's request (through the desktop app's built-in browser, which is signed in as machpath). No code has been pushed. The support links in `docs/USER_GUIDE.md` and `docs/ANKIWEB_LISTING.md` point to its Issues page. Pushing needs this session's GitHub connection to cover the machpath account (it covered only `ankomateam` when last checked). No license file has been chosen yet; ask the author before the code goes public.
+GitHub: the code is hosted at https://github.com/machpath/special-fields-by-ankoma (public; created and first pushed by the orchestrator on 2026-11-16 at the author's request, branch `main`). The author connected the machpath account to Claude's GitHub access, so a session can attach the repository with push access. Push at every checkpoint: the repository is now the most reliable copy (it doesn't need the author's PC to be on); the Desktop folder is kept in step. No license file has been chosen yet: ask the author.
 
 Run the tests with `bash tools/run_matrix.sh` (the folder mount ignores the executable bit). Full-size import (18,600 notes, 7,400 fields and 7,440 tags restored) measured 2.3 to 2.6 s; accepted.
 
