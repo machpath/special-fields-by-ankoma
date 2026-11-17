@@ -76,10 +76,23 @@ FULL_SYNC_NOTICE = (
     "synced this computer first, undo this update, sync, then import again."
 )
 MERGE_REPAIR_WARNING = (
-    "Nothing was imported. This file moves some notes to a different note type, "
-    "and Special Fields couldn't apply that change safely to your collection. "
-    "Your collection is unchanged. You can import this file with Anki's standard "
-    "import instead, or ask the deck's author for help."
+    "Nothing was imported. Special Fields couldn't apply this update safely to "
+    "your collection, so it changed nothing. This usually means the file moves "
+    "notes to a different note type in a way that can't be followed. You can "
+    "import this file with Anki's standard import instead, or ask the deck's "
+    "author for help."
+)
+_ROLLBACK_FAILED_LEAD = (
+    "The update could not be completed and could not be undone automatically. "
+)
+ROLLBACK_FAILED_WITH_BACKUP = _ROLLBACK_FAILED_LEAD + (
+    "Special Fields asked Anki to save a backup just before the update. To go "
+    "back to it, choose File → Switch Profile → Open Backup and pick the newest backup."
+)
+ROLLBACK_FAILED_NO_BACKUP = _ROLLBACK_FAILED_LEAD + (
+    "No backup could be made before the update. Check your cards, and restore one "
+    "of Anki's automatic backups from File → Switch Profile → Open Backup if "
+    "anything looks wrong."
 )
 UNDO_NOTE_PLAIN = "Not what you expected? Edit → Undo %s reverses the whole update." % UNDO_LABEL
 UNDO_BUTTON_LABEL = "Undo update"
@@ -659,10 +672,12 @@ def handle_apkg(
 def run_import_with_choices(mw: Any, path: str, settings: Settings) -> None:
     """Run the engine in a CollectionOp on the background thread with Anki's
     import progress. The op returns the ImportResult, whose `changes` aqt
-    uses to refresh the UI and the undo menu. A note type move the engine
-    could not repair (`engine.MergeRepairError`, contract rule 10g) gets a
-    plain warning; every other error goes to Anki's normal error dialog, as
-    before. Either way the engine has left the collection as it was."""
+    uses to refresh the UI and the undo menu. An update the engine could not
+    apply safely (`engine.MergeRepairError`, rules 10g and 12; collection
+    unchanged) and one it could not roll back (`engine.RollbackFailedError`,
+    rule 13; the text depends on whether the pre-import backup was made)
+    get a plain warning; every other error goes to Anki's normal error
+    dialog, as before."""
     from aqt.operations import CollectionOp
 
     from . import engine
@@ -675,8 +690,10 @@ def run_import_with_choices(mw: Any, path: str, settings: Settings) -> None:
     file_name = os.path.basename(path)
     backup_folder = _backup_folder(mw)  # read on the main thread
 
+    backup = {"made": False}
+
     def op(col: Any) -> ImportResult:
-        backup_before_import(col, backup_folder)
+        backup["made"] = backup_before_import(col, backup_folder)
         return engine.run_import(col, path, settings)
 
     def on_success(result: ImportResult) -> None:
@@ -685,6 +702,9 @@ def run_import_with_choices(mw: Any, path: str, settings: Settings) -> None:
         _later(mw, lambda: show_summary(mw, result, file_name))
 
     def on_failure(exc: Exception) -> None:
+        if isinstance(exc, engine.RollbackFailedError):
+            show_rollback_failed_warning(mw, backup["made"])
+            return
         if isinstance(exc, engine.MergeRepairError):
             show_merge_repair_warning(mw)
             return
@@ -733,6 +753,18 @@ def show_merge_repair_warning(mw: Any) -> None:
 
     showWarning(
         MERGE_REPAIR_WARNING,
+        parent=mw if isinstance(mw, QWidget) else None,
+        title=ADDON_NAME,
+        textFormat="plain",
+    )
+
+
+def show_rollback_failed_warning(mw: Any, backup_made: bool) -> None:
+    """Rule 13: the import could not be undone; say so plainly."""
+    from aqt.utils import showWarning
+
+    showWarning(
+        ROLLBACK_FAILED_WITH_BACKUP if backup_made else ROLLBACK_FAILED_NO_BACKUP,
         parent=mw if isinstance(mw, QWidget) else None,
         title=ADDON_NAME,
         textFormat="plain",

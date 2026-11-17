@@ -30,7 +30,7 @@ Last updated: 2026-11-16, evening (Pacific).
 | 2. Foundation (A): layout, `model.py`, `config.py`, `docs/CONTRACT.md` | Done |
 | 3. Parallel build: engine (B), settings window (C), test harness (D) | Done and saved. Gate met: the orchestrator ran `bash tools/run_matrix.sh --no-create` and saw `tests/engine` 26/26 and `tests/acceptance` 75/75 pass on 25.02.7 (Py 3.9 and 3.13), 25.07.5, 25.09.5, 26.05, 26.08.1, 26.09.4, 26.11b1, and `tests/ui` 46/46 on aqt 25.02.7 and 26.09.4 |
 | 4. Integration: import flow (E) | Done and saved: `import_flow.py` (question on every .apkg, progress, summary with undo, Tools menu item; also wraps the old `aqt.importing.importFile` route as a safety net) + `tests/flow/`. Gate met: orchestrator ran the matrix and saw engine 26/26 and acceptance 75/75 on all 8 headless versions, ui 46/46 and flow 77/60 passed on aqt 25.02.7 / 26.09.4 |
-| 5. Independent verification (G) + manual pass in desktop Anki | G reported; Critical/High findings fixed (rules 9 and 10) and pushed. Orchestrator re-ran the matrix after the fixes: engine 54/54 and acceptance 87/87 on all 8 headless versions, ui 47/47, flow 79 (aqt 25.02.7) and 62 (aqt 26.09.4); the verifier's own 74 checks now fail only on two accepted edge cases (equal timestamps; blank cloze card when Text is kept). Unrepairable-merge rollback and the pre-import backup are done and pushed (matrix after them: engine 60, acceptance 87, ui 47, flow 85 on aqt 25.02.7 / 68 on 26.09.4). Still to do: a focused re-verification of the rule 9/10 code, then the manual pass in real Anki |
+| 5. Independent verification + manual pass in desktop Anki | Two independent verifications done; all Critical/High findings are either fixed or now end in a clean refusal (contract rules 9 to 13). After the last round the orchestrator re-ran the matrix (engine 72, acceptance 87 on all 8 headless versions; ui 47; flow 88 on aqt 25.02.7, 71 on 26.09.4) and the second verifier's 17 scenarios on 25.02.7/py3.9 and 26.11b1: every completed import keeps all user data; every unsafe note type move is refused with the collection unchanged. Beta build made: `special_fields_by_ankoma-0.1.0-beta1.ankiaddon` (in the Desktop folder under `builds/`; loads under a numeric folder name in both Qt environments). NOT yet run in a real Anki: that manual pass is next and needs the author |
 | 6. Author beta with a real v1.3 | Not started; needs a v1.3 file from the author |
 | 7. Release (F): AnkiWeb upload by the author, ankomapath.com page | Not started |
 
@@ -74,12 +74,12 @@ Verdict: safe to trial on a COPY; must not go to users until the items below are
 
 | # | Severity | Finding | Status |
 | --- | --- | --- | --- |
-| V2-C1 | Critical | Note types made with Anki's Clone share field ids. A move between them adds no "+" fields, so the clean-up returned early while Anki had scrambled the fields of the user's OWN notes of the target type. Plain Anki with "merge note types" does the same | Fix requested: restore untouched notes regardless of leftovers; gate G1 |
+| V2-C1 | Critical | Note types made with Anki's Clone share field ids. A move between them adds no "+" fields, so the clean-up returned early while Anki had scrambled the fields of the user's OWN notes of the target type. Plain Anki with "merge note types" does the same | Fixed (`_restore_untouched`) and guarded by gate G1 |
 | V2-C2 | Critical | Notes arriving in one standard note type from two other types: reviewed cards deleted | Now refused by gate G2 (rule 12); making it succeed is not done |
 | V2-C3 | Critical | Old type's template has a non-clashing name: duplicate cards on every target note, cards left on the foreign template | Now refused by gates G2/G4 (rule 12); making it succeed is not done |
 | V2-H1 | High | Moves in both directions between two standard types are refused | Still refused (safe) |
 | V2-H2 | High | Standard types with identical templates under different names are refused | Still refused (safe) |
-| V2-H3 | High | If Anki's backend fails after the import, undo is gone and the user was told "unchanged" | Fix requested: rule 13 (`RollbackFailedError` + honest message pointing to the backup) |
+| V2-H3 | High | If Anki's backend fails after the import, undo is gone and the user was told "unchanged" | Done: rule 13 |
 | V2-M1/M2 | Medium | Extra non-clashing template or empty carried-over fields left on the target type | Open (M1 now refused where it creates cards on untouched notes) |
 
 Design decision after this round: stop patching Anki's merge case by case; the engine now has to PROVE the result is clean (contract rule 12) or roll back. Moves that the repair handles correctly go through (cloze types with independent ids, one direction; standard types with clashing template names, one direction; repeat imports; move-then-move-back). Everything else is refused with a clear message.
@@ -90,10 +90,12 @@ Design decision after this round: stop patching Anki's merge case by case; the e
 
 ### Next steps
 
-1. Review the fix agent's report; rerun `bash tools/run_matrix.sh --no-create`; confirm the C1 and H1 scenarios yourself. If `engine.py` doesn't mention removing leftover "+" fields, the fixes were not saved: redo them from contract rules 9 and 10.
-2. Build the add-on file: `python3 tools/build_addon.py` (writes `dist/special_fields_by_ankoma-<version>.ankiaddon`).
-3. Manual pass in desktop Anki on a COPY of a profile (question appears for double-click, drag-and-drop and File → Import; progress bar; undo label; sync), then the author's beta with a real v1.3.
-4. Release: author reviews `docs/USER_GUIDE.md` and `docs/ANKIWEB_LISTING.md`, uploads to AnkiWeb; ankomapath.com page after the author approves its content.
+1. Manual pass in desktop Anki on a COPY of the author's profile, with the author's go-ahead: install `builds/special_fields_by_ankoma-0.1.0-beta1.ankiaddon` (Tools → Add-ons → Install from file), then check: the Tools menu item; the settings window; the question on double-click, drag-and-drop and File → Import; progress; the summary; Edit → Undo label; a backup appears in the profile's backups folder; sync.
+2. Author decisions still open: (a) invest in making more kinds of note type move succeed, or avoid moving notes between note types in releases; (b) run `tools/check_shared_ids.py` on a COPY of the collection (do Ankoma's note types share ids?); (c) accept or not: when notes move in both directions between two note types, each type keeps the other's non-clashing fields as empty fields (no data lost); (d) the pre-import backup (rule 11) and rule 9; (e) license for the public repository; (f) what the Unrestricted note types are; (g) a v1.3 file for the beta.
+3. After the manual pass: fix what it finds, bump `human_version` in `manifest.json`, rebuild with `python3 tools/build_addon.py`, then the author's beta with a real v1.3.
+4. Release: author reviews `docs/USER_GUIDE.md` and `docs/ANKIWEB_LISTING.md`, uploads to AnkiWeb; ankomapath.com page after the author approves its content. The plan doc (claude.ai artifact) has not been updated with rules 9 to 13; `docs/CONTRACT.md` is the current spec.
+
+Which note type moves complete today: between note types whose card templates have the same name (cloze types; Image Occlusion types one way); to a brand-new note type; a user-changed note type; a same-named note type with a different id; cloned note types (shared field ids), one way or both; cloze moves both ways. Refused cleanly: notes from two types into one standard type; a standard old type whose template name differs from the target's or that has an extra template; Image Occlusion moves both ways in one release; cloze ↔ standard.
 
 Run the tests with `bash tools/run_matrix.sh` (the folder mount ignores the executable bit). Full-size import (18,600 notes, 7,400 fields and 7,440 tags restored) measured 2.3 to 2.6 s; accepted.
 

@@ -450,10 +450,10 @@ def test_unrepairable_move_shows_plain_warning_and_imports_nothing(fake_mw, pris
     assert _wait(qapp, lambda: "text" in seen)
     assert errors == [], "Anki's exception dialog must not be used"
     assert seen["text"] == (
-        "Nothing was imported. This file moves some notes to a different note type, and "
-        "Special Fields couldn't apply that change safely to your collection. Your collection "
-        "is unchanged. You can import this file with Anki's standard import instead, or ask "
-        "the deck's author for help."
+        "Nothing was imported. Special Fields couldn't apply this update safely to your "
+        "collection, so it changed nothing. This usually means the file moves notes to a "
+        "different note type in a way that can't be followed. You can import this file "
+        "with Anki's standard import instead, or ask the deck's author for help."
     )
     assert seen["text"] == flow.MERGE_REPAIR_WARNING
     assert seen["fmt"] == Qt.TextFormat.PlainText
@@ -498,4 +498,110 @@ def test_other_engine_errors_keep_anki_error_dialog(fake_mw, monkeypatch):
     assert len(errors) == 1 and len(warnings) == 1
     (args, kwargs) = warnings[0]
     assert args[0] == flow.MERGE_REPAIR_WARNING
+    assert kwargs.get("textFormat") == "plain" and kwargs.get("title") == ADDON_NAME
+
+
+# --------------------------------------------------------------------------
+# Rule 13: a rollback that cannot be done is said plainly
+
+
+class _ProfileManager:
+    def __init__(self, folder):
+        self._folder = folder
+
+    def backupFolder(self):  # noqa: N802 (Anki's name)
+        import os
+
+        os.makedirs(self._folder, exist_ok=True)
+        return self._folder
+
+
+def test_rollback_failed_real_backend_failure_with_backup(fake_mw, pristine_importer, make_col,
+                                                         tmp_path, qapp, monkeypatch):
+    """Real engine, real backend failure: the engine's scratch check is
+    bypassed (monkeypatched), so Anki itself refuses the repaired note type
+    on the user's collection, which discards Anki's undo history. The
+    backup is really written first, so the 'backup made' text is shown."""
+    import os
+
+    from aqt.qt import QMessageBox, QTimer
+
+    from special_fields_by_ankoma import engine
+
+    importing = pristine_importer
+    mw = fake_mw
+    mw.pm = _ProfileManager(str(tmp_path / "backups"))
+    flow.setup(mw)
+    path = _unrepairable_move(make_col, mw, tmp_path)
+    monkeypatch.setattr(engine._Validator, "check", lambda self, nt: None)
+    errors = []
+    import aqt.operations
+
+    monkeypatch.setattr(aqt.operations, "show_exception",
+                        lambda *, parent, exception: errors.append(exception))
+    seen = {}
+
+    def poll_box():
+        for w in QApplication.topLevelWidgets():
+            if isinstance(w, QMessageBox) and w.isVisible():
+                seen.update(text=w.text(), fmt=w.textFormat(), title=w.windowTitle())
+                w.accept()
+                return
+        seen["tries"] = seen.get("tries", 0) + 1
+        if seen["tries"] < 500:
+            QTimer.singleShot(10, poll_box)
+
+    def in_question(dlg):
+        poll_box()
+        QTest.mouseClick(dlg.import_button, Qt.MouseButton.LeftButton)
+
+    when_shown("special_fields_question", in_question)
+    importing.import_file(mw, path)
+    assert _wait(qapp, lambda: "text" in seen)
+    assert errors == []
+    assert [f for f in os.listdir(str(tmp_path / "backups")) if f.endswith(".colpkg")], "backup written"
+    assert seen["text"] == (
+        "The update could not be completed and could not be undone automatically. Special "
+        "Fields asked Anki to save a backup just before the update. To go back to it, choose "
+        "File → Switch Profile → Open Backup and pick the newest backup."
+    )
+    assert seen["text"] == flow.ROLLBACK_FAILED_WITH_BACKUP
+    assert seen["fmt"] == Qt.TextFormat.PlainText and seen["title"] == ADDON_NAME
+    for _ in range(20):
+        qapp.processEvents()
+        QTest.qWait(10)
+    assert find_top_level("special_fields_summary") is None
+
+
+@pytest.mark.parametrize("made", [True, False])
+def test_rollback_failed_text_follows_backup_result(fake_mw, monkeypatch, made):
+    import aqt.operations
+    import aqt.utils
+
+    from special_fields_by_ankoma import engine
+
+    warnings, errors, summaries = [], [], []
+    monkeypatch.setattr(aqt.utils, "showWarning", lambda *a, **k: warnings.append((a, k)))
+    monkeypatch.setattr(aqt.operations, "show_exception",
+                        lambda *, parent, exception: errors.append(exception))
+    monkeypatch.setattr(flow, "show_summary", lambda *a, **k: summaries.append(a))
+    monkeypatch.setattr(flow, "backup_before_import", lambda col, folder: made)
+
+    def run(col, path, settings):
+        raise engine.RollbackFailedError(RuntimeError("backend refused"))
+
+    monkeypatch.setattr(engine, "run_import", run)
+    flow.run_import_with_choices(fake_mw, "/x/deck.apkg", load_settings(fake_mw))
+    assert errors == [] and summaries == []
+    assert len(warnings) == 1
+    args, kwargs = warnings[0]
+    if made:
+        assert args[0] == flow.ROLLBACK_FAILED_WITH_BACKUP
+    else:
+        assert args[0] == (
+            "The update could not be completed and could not be undone automatically. No backup "
+            "could be made before the update. Check your cards, and restore one of Anki's "
+            "automatic backups from File → Switch Profile → Open Backup if anything looks wrong."
+        )
+        assert args[0] == flow.ROLLBACK_FAILED_NO_BACKUP
     assert kwargs.get("textFormat") == "plain" and kwargs.get("title") == ADDON_NAME

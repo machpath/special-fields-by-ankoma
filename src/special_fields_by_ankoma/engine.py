@@ -81,17 +81,35 @@ _FieldInfo = List[Tuple[Optional[int], str]]
 
 
 class MergeRepairError(Exception):
-    """Contract rule 10g: Anki's forced note type merge left a note type in a
-    state the engine cannot repair safely (blank and duplicate cards would
-    remain). Raised after the whole import has been rolled back, so the
-    collection is exactly as it was. `notetype` names the note type."""
+    """Contract rules 10g and 12: the result of the import could not be
+    repaired or proven clean (Anki's forced note type merge left a state the
+    engine cannot repair safely, or an invariant G1-G4 failed). Raised after
+    the whole import has been rolled back, so the collection is exactly as
+    it was. `notetype` names the note type ("" for a gate failure that is
+    not about one note type); `reason` says what failed."""
 
     def __init__(self, notetype: str, reason: str) -> None:
         self.notetype = notetype
         self.reason = reason
+        if notetype:
+            msg = ("Nothing was imported: the update moves notes to note type %r, and "
+                   "Anki's note type merge could not be repaired safely (%s)." % (notetype, reason))
+        else:
+            msg = "Nothing was imported: the result of the update could not be proven safe (%s)." % reason
+        super().__init__(msg)
+
+
+class RollbackFailedError(Exception):
+    """Contract rule 13: the import failed after Anki had already changed
+    the collection, and it could not be rolled back because Anki's undo
+    history is gone (a failing backend operation discards it). The
+    collection may be half-updated. The original error is `__cause__`."""
+
+    def __init__(self, original: BaseException) -> None:
+        self.original = original
         super().__init__(
-            "Nothing was imported: the update moves notes to note type %r, and "
-            "Anki's note type merge could not be repaired safely (%s)." % (notetype, reason)
+            "The update could not be completed and could not be undone automatically "
+            "(Anki's undo history was discarded): %s" % (original,)
         )
 
 
@@ -100,19 +118,22 @@ class _Snapshot:
     (note type id, raw fields, raw tags), every note type's fields and
     template ids, and the ids of all cards."""
 
-    __slots__ = ("notes", "fields", "templates", "card_ids")
+    __slots__ = ("notes", "fields", "templates", "card_ids", "cards", "revlog")
 
     def __init__(
         self,
         notes: Dict[int, Tuple[int, str, str]],
         fields: Dict[int, _FieldInfo],
         templates: Dict[int, Set[Any]],
-        card_ids: Set[int],
+        cards: Dict[int, Tuple[Any, ...]],
+        revlog: Tuple[Any, ...],
     ) -> None:
         self.notes = notes
         self.fields = fields
         self.templates = templates
-        self.card_ids = card_ids
+        self.cards = cards  # card id -> _CARD_COLS values (ord last)
+        self.card_ids = set(cards)
+        self.revlog = revlog  # _REVLOG_SUM aggregate
 
 
 def run_import(col: Collection, path: str, settings: Settings) -> ImportResult:
@@ -125,16 +146,25 @@ def run_import(col: Collection, path: str, settings: Settings) -> ImportResult:
     t_start = time.perf_counter()
     prior = col.undo_status()
     undo_pos = col.add_custom_undo_entry(UNDO_LABEL)
+    stage: Dict[str, bool] = {"imported": False}
     try:
-        _run(col, path, settings, res, undo_pos)
-    except BaseException:
-        _roll_back(col, undo_pos, prior)
+        _run(col, path, settings, res, undo_pos, stage)
+    except BaseException as exc:
+        rolled_back = _roll_back(col, undo_pos, prior)
+        if stage["imported"] and not rolled_back and isinstance(exc, Exception):
+            # Rule 13: the native import changed the collection and Anki's
+            # undo history is gone, so it cannot be put back. Say so.
+            raise RollbackFailedError(exc) from exc
+        # Before the native import returned, the collection is unchanged
+        # (the import is one backend transaction, rolled back on error).
         raise
     res.seconds["total"] = time.perf_counter() - t_start
     return res
 
 
-def _run(col: Collection, path: str, settings: Settings, res: ImportResult, undo_pos: int) -> None:
+def _run(
+    col: Collection, path: str, settings: Settings, res: ImportResult, undo_pos: int, stage: Dict[str, bool]
+) -> None:
     # --- snapshot (read-only) -------------------------------------------------
     t0 = time.perf_counter()
     _clear_notetype_cache(col)
@@ -166,6 +196,7 @@ def _run(col: Collection, path: str, settings: Settings, res: ImportResult, undo
         ),
     )
     out = col.import_anki_package(request)
+    stage["imported"] = True
     # pylib caches note types; a backend import does not invalidate the cache
     # (aqt only clears it on the main thread after the op).
     _clear_notetype_cache(col)
@@ -186,12 +217,17 @@ def _run(col: Collection, path: str, settings: Settings, res: ImportResult, undo
     t2 = time.perf_counter()
     updated_ids = [int(entry.id.nid) for entry in log.updated]
     added_ids = [int(entry.id.nid) for entry in log.new]
+    updated = set(updated_ids)
     _restore_notes(col, snap, settings, updated_ids, added_ids, res)
+    _restore_untouched(col, snap, updated)
     if res.notes_updated:
-        _clean_merge_leftovers(col, snap, set(updated_ids).union(added_ids))
+        _clean_merge_leftovers(col, snap, updated.union(added_ids))
     if styling is not None:
         _restore_styling(col, styling)
     _restore_import_prefs(col, prefs)
+    t3 = time.perf_counter()
+    _gate(col, snap, updated)  # rule 12: raises MergeRepairError
+    res.seconds["gate"] = time.perf_counter() - t3
     res.note_types_changed = col.db.scalar("select scm from col") != scm_before
     res.changes = col.merge_undo_entries(undo_pos)
     res.seconds["restore"] = time.perf_counter() - t2
@@ -214,16 +250,37 @@ def _snapshot(col: Collection) -> _Snapshot:
     Everything is needed whatever the settings: rule 10 follows notes the
     update moves to another note type, and rule 9 may put back any field
     that is not listed in the settings. Strings are kept raw and split only
-    for the notes the import updates. Card ids (one more cheap query) let
-    the merge clean-up tell cards this import created from the user's."""
+    for the notes the import updates. Every card's scheduling columns and an
+    aggregate of the review log (two more cheap queries) are what the rule
+    12 gate compares against; card ids also let the merge clean-up tell
+    cards this import created from the user's."""
     notes: Dict[int, Tuple[int, str, str]] = {}
     for nid, mid, flds, tags in col.db.execute("select id, mid, flds, tags from notes"):
         notes[nid] = (mid, flds, tags)
     templates: Dict[int, Set[Any]] = {}
     for nt in col.models.all():
         templates[int(nt["id"])] = {t.get("id") for t in nt["tmpls"] if t.get("id")}
-    card_ids = set(col.db.list("select id from cards"))
-    return _Snapshot(notes, _notetype_fields(col), templates, card_ids)
+    cards = {row[0]: tuple(row[1:]) for row in col.db.execute("select id, %s from cards" % _CARD_COLS)}
+    return _Snapshot(notes, _notetype_fields(col), templates, cards, _revlog_sum(col))
+
+
+# Card columns rule 12 (G2) compares; `ord` must stay last.
+_CARD_COLS = "nid, did, odid, due, odue, ivl, factor, reps, lapses, left, queue, type, flags, data, ord"
+
+# An order-independent aggregate of every revlog column (G3): the importer
+# never touches the review log, so any change shows here. Modulo keeps the
+# integer sums far from overflow on any realistic review log.
+_REVLOG_SUM = (
+    "select count(), coalesce(sum(id % 1000003), 0), coalesce(sum(id % 999983), 0), "
+    "coalesce(sum(cid % 1000003), 0), coalesce(sum(usn), 0), coalesce(sum(ease), 0), "
+    "coalesce(sum(ivl % 1000003), 0), coalesce(sum(lastIvl % 1000003), 0), "
+    "coalesce(sum(factor), 0), coalesce(sum(time % 1000003), 0), coalesce(sum(type), 0), "
+    "coalesce(sum((id % 9973) * (cid % 9967) % 1000003), 0) from revlog"
+)
+
+
+def _revlog_sum(col: Collection) -> Tuple[Any, ...]:
+    return tuple(col.db.first(_REVLOG_SUM))
 
 
 def _snapshot_styling(col: Collection) -> Dict[int, Tuple[str, List[Dict[str, Any]]]]:
@@ -395,6 +452,156 @@ def _restore_notes(
             res.notes_with_tags_kept += 1
     if to_save:
         col.update_notes(to_save)
+
+
+# --- notes the import did not update (rule 12 G1, C1) ----------------------------------
+
+
+def _untouched_expected(pre: Optional[_FieldInfo], post: Optional[_FieldInfo], old_flds: str) -> Optional[List[str]]:
+    """The field values a note the import did not update must have on its
+    (same) note type as it is now: each pre-import value at the position of
+    the same field (field config id, then name), every field new to the note
+    type empty. None if that mapping is not exact."""
+    if pre is None or post is None:
+        return None
+    old_vals = old_flds.split("\x1f")
+    if len(old_vals) != len(pre):
+        return None
+    fmap = _field_map(pre, post, moved=False)
+    if None in fmap:
+        return None
+    vals = [""] * len(post)
+    for i, idx in enumerate(fmap):
+        vals[idx] = old_vals[i]  # type: ignore[index]
+    return vals
+
+
+def _restore_untouched(col: Collection, snap: _Snapshot, updated: Set[int]) -> int:
+    """Put back every pre-existing note the importer did not report as
+    updated whose field values or tags changed anyway. Anki's forced merge
+    rewrites such notes of a merged note type by another note type's field
+    positions (also between cloned note types, which share field ids and
+    leave no "+" fields). A note that cannot be put back exactly is left for
+    the gate (G1) to refuse. Returns the number of notes written."""
+    post_fields = _notetype_fields(col)
+    fixes: Dict[int, Tuple[Optional[List[str]], Optional[List[str]]]] = {}
+    for nid, mid, flds, tags in col.db.execute("select id, mid, flds, tags from notes"):
+        old = snap.notes.get(nid)
+        if old is None or nid in updated or (flds == old[1] and tags == old[2]) or mid != old[0]:
+            continue
+        new_vals = None
+        if flds != old[1]:
+            expected = _untouched_expected(snap.fields.get(mid), post_fields.get(mid), old[1])
+            if expected is not None and expected != flds.split("\x1f"):
+                new_vals = expected
+        new_tags = old[2].split() if tags.split() != old[2].split() else None
+        if new_vals is not None or new_tags is not None:
+            fixes[nid] = (new_vals, new_tags)
+    if not fixes:
+        return 0
+    notes = []
+    for nid in sorted(fixes):
+        new_vals, new_tags = fixes[nid]
+        note = col.get_note(nid)
+        if new_vals is not None:
+            if len(new_vals) != len(note.fields):
+                continue  # leave it to the gate
+            note.fields = list(new_vals)
+        if new_tags is not None:
+            note.tags = list(new_tags)
+        notes.append(note)
+    if notes:
+        col.update_notes(notes)
+    return len(notes)
+
+
+# --- rule 12: prove the result or refuse ---------------------------------------------
+
+
+def _examples(ids: Sequence[int]) -> str:
+    return ", ".join(str(i) for i in list(ids)[:3])
+
+
+def _gate(col: Collection, snap: _Snapshot, updated: Set[int]) -> None:
+    """Contract rule 12: check G1-G4 against the pre-import snapshot; raise
+    MergeRepairError (run_import then rolls everything back) on the first
+    invariant that does not hold.
+
+    G4 is read as rule 12 intends it ("must never fire on a correct
+    import"): a new card on a note the import did not update is a failure
+    unless it is on a card template the author added in this release, i.e.
+    a template whose id did not exist on ANY note type before the import.
+    Anki gives every note of a standard note type a card for a template the
+    author added, which is the normal result of such an update. The merge
+    damage G4 exists for is always caught: a duplicate card on a template
+    the note type already had, or a card on a template Anki's merge copied
+    over from another of the user's note types (its id existed before)."""
+    _clear_notetype_cache(col)
+    post_fields = _notetype_fields(col)
+    post_mid: Dict[int, int] = {}
+    # G1
+    bad: List[int] = []
+    for nid, mid, flds, tags in col.db.execute("select id, mid, flds, tags from notes"):
+        post_mid[nid] = mid
+        old = snap.notes.get(nid)
+        if old is None or nid in updated:
+            continue
+        if mid != old[0] or tags.split() != old[2].split():
+            bad.append(nid)
+        elif flds != old[1]:
+            expected = _untouched_expected(snap.fields.get(mid), post_fields.get(mid), old[1])
+            if expected is None or expected != flds.split("\x1f"):
+                bad.append(nid)
+    missing = [nid for nid in snap.notes if nid not in post_mid]
+    if bad or missing:
+        raise MergeRepairError("", "G1: %d note(s) the update did not contain changed or disappeared, e.g. note %s"
+                               % (len(bad) + len(missing), _examples(bad + missing)))
+    # G2 and G4
+    changed: List[int] = []
+    new_cards: List[int] = []
+    post_cards: Set[int] = set()
+    template_ids: Dict[Optional[int], List[Any]] = {}
+    known_templates: Set[Any] = set()
+    for tids_before in snap.templates.values():
+        known_templates |= tids_before
+    for row in col.db.execute("select id, %s from cards" % _CARD_COLS):
+        cid = row[0]
+        post_cards.add(cid)
+        old = snap.cards.get(cid)
+        vals = tuple(row[1:])
+        if old is not None:
+            if vals[:-1] != old[:-1]:
+                changed.append(cid)
+            elif vals[-1] != old[-1]:
+                nid = vals[0]
+                pre_note = snap.notes.get(nid)
+                if pre_note is None or pre_note[0] == post_mid.get(nid):
+                    changed.append(cid)  # template changed without a note type move
+            continue
+        nid = vals[0]
+        pre_note = snap.notes.get(nid)
+        if pre_note is None or nid in updated:
+            continue
+        mid = post_mid.get(nid)
+        if mid not in template_ids:
+            nt = col.models.get(mid) if mid else None
+            # cloze note types have one template; their card ords are cloze numbers
+            template_ids[mid] = [] if not nt or nt.get("type") == 1 else [t.get("id") for t in nt["tmpls"]]
+        tids = template_ids[mid]
+        ord_ = vals[-1]
+        tid = tids[ord_] if 0 <= ord_ < len(tids) else None
+        if not tid or tid in known_templates or pre_note[0] != mid:
+            new_cards.append(cid)
+    lost = [cid for cid in snap.cards if cid not in post_cards]
+    if changed or lost:
+        raise MergeRepairError("", "G2: %d existing card(s) lost or changed, e.g. card %s"
+                               % (len(changed) + len(lost), _examples(lost + changed)))
+    # G3
+    if _revlog_sum(col) != snap.revlog:
+        raise MergeRepairError("", "G3: the review log changed")
+    if new_cards:
+        raise MergeRepairError("", "G4: %d new card(s) on notes the update did not contain, e.g. card %s"
+                               % (len(new_cards), _examples(new_cards)))
 
 
 # --- note type merge clean-up (rule 10b) --------------------------------------------
@@ -744,21 +951,28 @@ def _clear_notetype_cache(col: Collection) -> None:
         clear()
 
 
-def _roll_back(col: Collection, undo_pos: int, prior: Any = None) -> None:
+def _roll_back(col: Collection, undo_pos: int, prior: Any = None) -> bool:
     """Undo everything since `undo_pos` (our custom entry), so a failed
     import leaves the collection as it was. The native import is a single
     transaction, so if it raised it changed nothing; undoing our then-empty
     entry also puts the user's own last action back on top of the undo
-    stack. Only undoes if our entry is the one on top."""
+    stack. Only undoes if our entry is the one on top.
+
+    Returns True if the undo really happened. False means Anki's undo
+    history no longer holds our entry (a failing backend operation discards
+    the whole queue) or something else is on top: nothing was undone."""
+    done = False
     try:
         col.merge_undo_entries(undo_pos)
         status = col.undo_status()
         if status.undo == UNDO_LABEL and status.last_step == undo_pos:
             col.undo()
+            done = True
             _forget_redo(col, prior)
     except Exception:
         pass
     _clear_notetype_cache(col)
+    return done
 
 
 # A config key every collection has; writing its own value back is a no-op
