@@ -16,7 +16,7 @@ Widgets carry objectNames so tests and other workstreams can find them:
     field_search, field_matches, field_done_button, field_hint
     tag_chips         container of `TagChip` widgets ("tag_chip")
     remove_tag_button the ✕ on a chip
-    tag_input, tag_select_button, tag_list, tag_hint
+    tag_input, tag_list, tag_hint
     styling_switch    "Update card templates and styling"
     restore_button, cancel_button, save_button
 """
@@ -127,8 +127,8 @@ def filter_fields(query: str, all_fields: Iterable[str], exclude: Iterable[str] 
 
 
 def _pick_target(query: str, matches: Sequence[str], norm) -> Optional[str]:
-    """What Enter / Select adds when nothing is highlighted: the exact match
-    (ignoring case), else the only match, else nothing."""
+    """What Enter adds in the field picker when nothing is highlighted: the
+    exact match (ignoring case), else the only match, else nothing."""
     q = norm(query)
     if not q:
         return None
@@ -726,16 +726,11 @@ class SettingsDialog(QDialog):
         self.tag_input.setPlaceholderText("Start typing a tag from your collection…")
         self.tag_input.setAccessibleName("Add a protected tag")
         self.tag_input.setAccessibleDescription(
-            "Type to list matching tags. Up and Down move through the list, Enter adds."
+            "Type to list matching tags. Up and Down move through the list, "
+            "Enter adds the highlighted tag, or click a tag to add it."
         )
         self.tag_input.textChanged.connect(self._refresh_tag_matches)
         line.addWidget(self.tag_input, 1)
-        self.tag_select_button = QPushButton("Select", self)
-        self.tag_select_button.setObjectName("tag_select_button")
-        self.tag_select_button.setAutoDefault(False)
-        self.tag_select_button.setAccessibleName("Add the selected tag")
-        self.tag_select_button.clicked.connect(self.select_tag)
-        line.addWidget(self.tag_select_button)
         sec.addLayout(line)
 
         self.tag_list = QListWidget(self)
@@ -743,14 +738,14 @@ class SettingsDialog(QDialog):
         self.tag_list.setAccessibleName("Matching tags")
         self.tag_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.tag_list.setTextElideMode(Qt.TextElideMode.ElideMiddle)
-        self.tag_list.itemSelectionChanged.connect(self._on_tag_selection_changed)
+        # One click adds the tag: no highlight-then-confirm step.
         self.tag_list.itemClicked.connect(self._on_tag_clicked)
-        self.tag_list.itemDoubleClicked.connect(lambda item: self.add_tag(item.text()))
         self.tag_list.hide()
         sec.addWidget(self.tag_list)
 
         self.tag_hint = self._muted_label("", "tag_hint")
         self.tag_hint.setAccessibleName("Tag hint")
+        self.tag_hint.hide()
         sec.addWidget(self.tag_hint)
         return sec
 
@@ -790,7 +785,7 @@ class SettingsDialog(QDialog):
         self._rebuild_chips()
         self.styling_switch.setChecked(bool(settings.update_note_types))
         self.tag_input.clear()
-        self.tag_hint.setText("")
+        self._set_tag_hint("")
         self.close_field_picker()
 
     def result_settings(self) -> Settings:
@@ -992,34 +987,35 @@ class SettingsDialog(QDialog):
         self.tag_list.blockSignals(True)
         self.tag_list.clear()
         self.tag_list.addItems(shown)
-        target = self._auto_tag_target()
-        if target is not None and target in shown:
-            self.tag_list.setCurrentRow(shown.index(target))
+        # The first match is highlighted, ready for Enter. The exception: the
+        # typed text is itself an already protected tag, so Enter must not add
+        # a different (sub-) tag by accident.
+        if shown and not self._is_protected(query):
+            self.tag_list.setCurrentRow(0)
         self.tag_list.blockSignals(False)
         self._fit_list(self.tag_list, 8)
         self.tag_list.setVisible(bool(shown))
         if not query.strip():
-            self.tag_hint.setText("")
-        elif not self._tag_matches:
-            if self._is_protected(query):
-                self.tag_hint.setText('"%s" is already protected.' % query.strip())
-            else:
-                self.tag_hint.setText(
-                    'No tag in your collection matches "%s". Only existing tags can be added.'
-                    % query.strip()
-                )
+            self._set_tag_hint("")
         elif self._is_protected(query):
-            self.tag_hint.setText('"%s" is already protected.' % query.strip())
-        elif target is not None:
-            self.tag_hint.setText('Press Enter or Select to add "%s".' % target)
+            self._set_tag_hint('"%s" is already protected.' % query.strip())
+        elif not self._tag_matches:
+            self._set_tag_hint(
+                'No tag in your collection matches "%s". Only existing tags can be added.'
+                % query.strip()
+            )
         elif len(self._tag_matches) > MAX_TAGS_SHOWN:
-            self.tag_hint.setText(
+            self._set_tag_hint(
                 "Showing the first %d of %d matching tags. Keep typing to narrow the list."
                 % (MAX_TAGS_SHOWN, len(self._tag_matches))
             )
         else:
-            self.tag_hint.setText("Keep typing, or pick a tag in the list.")
-        self._update_select_button()
+            self._set_tag_hint("")
+
+    def _set_tag_hint(self, text: str) -> None:
+        """The line under the tag box: shown only when there is something to say."""
+        self.tag_hint.setText(text)
+        self.tag_hint.setVisible(bool(text))
 
     def _fit_list(self, lst: QListWidget, max_rows: int) -> None:
         rows = min(max(lst.count(), 1), max_rows)
@@ -1027,31 +1023,15 @@ class SettingsDialog(QDialog):
         lst.setFixedHeight(rows * row_h + 2 * lst.frameWidth() + 4)
 
     def tag_target(self) -> Optional[str]:
-        """The tag Enter or Select would add now, or None."""
+        """The tag Enter would add now (the highlighted one), or None."""
         item = self.tag_list.currentItem()
         if item is not None and item.isSelected() and self.tag_input.text().strip():
             return item.text()
-        return self._auto_tag_target()
-
-    def _auto_tag_target(self) -> Optional[str]:
-        """The exact or only match for the typed text. Typing a tag that is
-        already protected never adds a different (e.g. sub-) tag by accident."""
-        query = self.tag_input.text()
-        if self._is_protected(query):
-            return None
-        return _pick_target(query, self._tag_matches, norm_tag)
-
-    def _update_select_button(self) -> None:
-        self.tag_select_button.setEnabled(self.tag_target() is not None)
-
-    def _on_tag_selection_changed(self) -> None:
-        self._update_select_button()
-        item = self.tag_list.currentItem()
-        if item is not None and item.isSelected():
-            self.tag_hint.setText('Press Select or Enter to add "%s".' % item.text())
+        return None
 
     def _on_tag_clicked(self, item: QListWidgetItem) -> None:
-        self._on_tag_selection_changed()
+        if self.add_tag(item.text()):
+            self.tag_input.setFocus()
 
     def add_tag(self, tag: str) -> bool:
         """Protect `tag` if it exists in the collection; returns True if added."""
@@ -1062,12 +1042,12 @@ class SettingsDialog(QDialog):
                 existing = t
                 break
         if existing is None:
-            self.tag_hint.setText(
+            self._set_tag_hint(
                 'No tag in your collection matches "%s". Only existing tags can be added.' % tag.strip()
             )
             return False
         if self._is_protected(existing):
-            self.tag_hint.setText('"%s" is already protected.' % existing)
+            self._set_tag_hint('"%s" is already protected.' % existing)
             return False
         self._tags.append(existing)
         self._rebuild_chips()
@@ -1075,11 +1055,10 @@ class SettingsDialog(QDialog):
         self.tag_input.clear()
         self.tag_input.blockSignals(False)
         self._refresh_tag_matches()
-        self.tag_hint.setText('Added "%s".' % existing)
         return True
 
     def select_tag(self) -> bool:
-        """Enter / Select: add the highlighted tag, else the exact or only match."""
+        """Enter: add the highlighted tag."""
         target = self.tag_target()
         if target is not None:
             ok = self.add_tag(target)
@@ -1087,13 +1066,13 @@ class SettingsDialog(QDialog):
                 self.tag_input.setFocus()
             return ok
         if not self.tag_input.text().strip():
-            self.tag_hint.setText("Start typing a tag from your collection.")
-        elif self._tag_matches:
-            self.tag_hint.setText("Keep typing, or pick a tag in the list.")
+            self._set_tag_hint("")
         elif self._is_protected(self.tag_input.text()):
-            self.tag_hint.setText('"%s" is already protected.' % self.tag_input.text().strip())
+            self._set_tag_hint('"%s" is already protected.' % self.tag_input.text().strip())
+        elif self._tag_matches:
+            self._set_tag_hint("Pick a tag in the list.")
         else:
-            self.tag_hint.setText(
+            self._set_tag_hint(
                 'No tag in your collection matches "%s". Only existing tags can be added.'
                 % self.tag_input.text().strip()
             )
@@ -1107,7 +1086,6 @@ class SettingsDialog(QDialog):
             return False
         self._rebuild_chips()
         self._refresh_tag_matches()
-        self.tag_hint.setText('Removed "%s".' % tag)
         self.tag_input.setFocus()
         return True
 
@@ -1139,7 +1117,7 @@ class SettingsDialog(QDialog):
                 return True
             if key == Qt.Key.Key_Escape and self.tag_input.text():
                 self.tag_input.clear()
-                self.tag_hint.setText("")
+                self._set_tag_hint("")
                 self.tag_input.setFocus()
                 return True
         if obj is self.field_search or obj is self.field_matches:

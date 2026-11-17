@@ -6,7 +6,7 @@ import dataclasses
 
 from PyQt6.QtTest import QTest
 
-from aqt.qt import QDialog, QPalette, QColor, QApplication, QWidget, Qt
+from aqt.qt import QDialog, QPalette, QColor, QApplication, QWidget, QPushButton, Qt
 
 from special_fields_by_ankoma.config import DEFAULT_FIELDS, default_settings
 from special_fields_by_ankoma.model import ACCENT_COLOR, FieldChoice, Settings
@@ -255,9 +255,8 @@ def test_already_protected_tags_not_listed(make_dialog):
     QTest.keyClick(dlg.tag_input, Qt.Key.Key_Return)
     assert dlg.protected_tags() == ["#edited"]
     assert dlg.add_tag("#EDITED") is False
-    # The sub-tag can still be picked deliberately.
+    # The sub-tag can still be picked deliberately: one click adds it.
     click_item(dlg.tag_list, "#edited::images")
-    QTest.keyClick(dlg.tag_input, Qt.Key.Key_Return)
     assert dlg.protected_tags() == ["#edited", "#edited::images"]
 
 
@@ -287,64 +286,95 @@ def test_enter_adds_single_match(make_dialog):
     assert dlg.protected_tags() == ["my-edits::rewritten"]
 
 
-def test_enter_with_several_matches_and_no_exact_adds_nothing(make_dialog):
+def test_first_match_is_highlighted_and_enter_adds_it(make_dialog):
     dlg = make_dialog()
     type_into(dlg.tag_input, "board")
-    assert len(list_texts(dlg.tag_list)) == 2
-    assert not dlg.tag_select_button.isEnabled()
+    assert list_texts(dlg.tag_list) == ["board-review", "board-review::missed"]
+    assert dlg.tag_list.currentRow() == 0 and dlg.tag_list.item(0).isSelected()
+    assert dlg.tag_target() == "board-review"
+    assert dlg.protected_tags() == []  # highlighting alone adds nothing
     QTest.keyClick(dlg.tag_input, Qt.Key.Key_Return)
-    assert dlg.protected_tags() == []
-    assert "keep typing" in dlg.tag_hint.text().lower()
+    assert dlg.protected_tags() == ["board-review"]
+    assert dlg.tag_input.text() == ""
+    assert dlg.isVisible()  # Enter didn't trigger Save
 
 
-def test_select_button_adds_single_match(make_dialog):
+def test_there_is_no_select_button(make_dialog):
     dlg = make_dialog()
-    type_into(dlg.tag_input, "#edited::im")
-    assert dlg.tag_select_button.isEnabled()
-    QTest.mouseClick(dlg.tag_select_button, Qt.MouseButton.LeftButton)
-    assert dlg.protected_tags() == ["#edited::images"]
+    assert not hasattr(dlg, "tag_select_button")
+    assert dlg.findChild(QPushButton, "tag_select_button") is None
+    assert not [b for b in dlg.findChildren(QPushButton) if b.text() == "Select"]
 
 
-def test_click_in_list_then_select(make_dialog):
+def test_one_click_adds_a_tag_that_was_not_highlighted(make_dialog):
     dlg = make_dialog()
     type_into(dlg.tag_input, "board")
-    assert not dlg.tag_select_button.isEnabled()
+    assert dlg.tag_target() == "board-review"  # the first one is highlighted
     click_item(dlg.tag_list, "board-review::missed")
-    assert dlg.protected_tags() == []  # a single click only highlights
-    assert dlg.tag_select_button.isEnabled()
-    assert "select" in dlg.tag_hint.text().lower()
-    QTest.mouseClick(dlg.tag_select_button, Qt.MouseButton.LeftButton)
     assert dlg.protected_tags() == ["board-review::missed"]
+    assert [c.tag for c in dlg.tag_chips()] == ["board-review::missed"]
+    assert dlg.tag_input.text() == ""
+    assert not dlg.tag_list.isVisible()
 
 
-def test_double_click_adds(make_dialog):
+def test_one_click_adds_the_highlighted_tag(make_dialog):
+    dlg = make_dialog()
+    type_into(dlg.tag_input, "board")
+    click_item(dlg.tag_list, "board-review")
+    assert dlg.protected_tags() == ["board-review"]
+
+
+def test_double_click_adds_only_one_tag(make_dialog):
     dlg = make_dialog()
     type_into(dlg.tag_input, "board")
     click_item(dlg.tag_list, "board-review", double=True)
     assert dlg.protected_tags() == ["board-review"]
 
 
+def test_no_message_after_adding_or_removing_a_tag(make_dialog):
+    dlg = make_dialog()
+    type_into(dlg.tag_input, "#edited::im")
+    QTest.keyClick(dlg.tag_input, Qt.Key.Key_Return)
+    assert dlg.protected_tags() == ["#edited::images"]
+    assert dlg.tag_hint.text() == "" and not dlg.tag_hint.isVisible()
+    type_into(dlg.tag_input, "board")
+    click_item(dlg.tag_list, "board-review")
+    assert dlg.tag_hint.text() == "" and not dlg.tag_hint.isVisible()
+    dlg.remove_tag("board-review")
+    assert dlg.tag_hint.text() == "" and not dlg.tag_hint.isVisible()
+
+
+def test_no_hint_while_matches_are_listed(make_dialog):
+    dlg = make_dialog()
+    type_into(dlg.tag_input, "board")
+    assert dlg.tag_list.isVisible()
+    assert not dlg.tag_hint.isVisible()
+
+
 def test_up_down_move_through_list_and_enter_adds(make_dialog):
     dlg = make_dialog()
     type_into(dlg.tag_input, "my")
     assert list_texts(dlg.tag_list) == ["my-edits", "my-edits::rewritten"]
-    QTest.keyClick(dlg.tag_input, Qt.Key.Key_Down)
-    assert dlg.tag_target() == "my-edits"
+    assert dlg.tag_target() == "my-edits"  # first one highlighted from the start
     QTest.keyClick(dlg.tag_input, Qt.Key.Key_Down)
     assert dlg.tag_target() == "my-edits::rewritten"
     QTest.keyClick(dlg.tag_input, Qt.Key.Key_Down)  # stays on the last
     assert dlg.tag_target() == "my-edits::rewritten"
     QTest.keyClick(dlg.tag_input, Qt.Key.Key_Up)
     assert dlg.tag_target() == "my-edits"
+    QTest.keyClick(dlg.tag_input, Qt.Key.Key_Up)  # stays on the first
+    assert dlg.tag_target() == "my-edits"
+    QTest.keyClick(dlg.tag_input, Qt.Key.Key_Down)
     QTest.keyClick(dlg.tag_input, Qt.Key.Key_Return)
-    assert dlg.protected_tags() == ["my-edits"]
+    assert dlg.protected_tags() == ["my-edits::rewritten"]
 
 
 def test_text_matching_no_tag_is_rejected(make_dialog):
     dlg = make_dialog()
     type_into(dlg.tag_input, "not-a-real-tag")
     assert not dlg.tag_list.isVisible()
-    assert not dlg.tag_select_button.isEnabled()
+    assert dlg.tag_target() is None
+    assert dlg.tag_hint.isVisible()
     assert "only existing tags can be added" in dlg.tag_hint.text().lower()
     QTest.keyClick(dlg.tag_input, Qt.Key.Key_Return)
     assert dlg.protected_tags() == []
@@ -460,14 +490,14 @@ def test_every_control_reachable_by_tab(make_dialog):
     s = dataclasses.replace(default_settings(), protected_tags=("#edited",))
     dlg = make_dialog(settings=s)
     dlg.add_field("Remarks")
-    type_into(dlg.tag_input, "board-review::")  # enables Select
+    type_into(dlg.tag_input, "board-review::")  # shows the list
     chain = []
     w = dlg.nextInFocusChain()
     while w is not dlg and len(chain) < 500:
         chain.append(w)
         w = w.nextInFocusChain()
     tabbable = {id(x) for x in chain if x.focusPolicy() & Qt.FocusPolicy.TabFocus}
-    wanted = [dlg.add_field_button, dlg.tag_input, dlg.tag_select_button, dlg.tag_list,
+    wanted = [dlg.add_field_button, dlg.tag_input, dlg.tag_list,
               dlg.styling_switch, dlg.restore_button, dlg.cancel_button, dlg.save_button,
               dlg.row_for("Remarks").remove_button, dlg.tag_chips()[0].remove_button]
     for row in dlg.field_rows():

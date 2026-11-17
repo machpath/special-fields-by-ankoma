@@ -30,7 +30,7 @@ Last updated: 2026-11-16, evening (Pacific).
 | 2. Foundation (A): layout, `model.py`, `config.py`, `docs/CONTRACT.md` | Done |
 | 3. Parallel build: engine (B), settings window (C), test harness (D) | Done and saved. Gate met: the orchestrator ran `bash tools/run_matrix.sh --no-create` and saw `tests/engine` 26/26 and `tests/acceptance` 75/75 pass on 25.02.7 (Py 3.9 and 3.13), 25.07.5, 25.09.5, 26.05, 26.08.1, 26.09.4, 26.11b1, and `tests/ui` 46/46 on aqt 25.02.7 and 26.09.4 |
 | 4. Integration: import flow (E) | Done and saved: `import_flow.py` (question on every .apkg, progress, summary with undo, Tools menu item; also wraps the old `aqt.importing.importFile` route as a safety net) + `tests/flow/`. Gate met: orchestrator ran the matrix and saw engine 26/26 and acceptance 75/75 on all 8 headless versions, ui 46/46 and flow 77/60 passed on aqt 25.02.7 / 26.09.4 |
-| 5. Independent verification + manual pass in desktop Anki | Two independent verifications done; all Critical/High findings are either fixed or now end in a clean refusal (contract rules 9 to 13). After the last round the orchestrator re-ran the matrix (engine 72, acceptance 87 on all 8 headless versions; ui 47; flow 88 on aqt 25.02.7, 71 on 26.09.4) and the second verifier's 17 scenarios on 25.02.7/py3.9 and 26.11b1: every completed import keeps all user data; every unsafe note type move is refused with the collection unchanged. Beta build made: `special_fields_by_ankoma-0.1.0-beta1.ankiaddon` (in the Desktop folder under `builds/`; loads under a numeric folder name in both Qt environments). NOT yet run in a real Anki: that manual pass is next and needs the author |
+| 5. Independent verification + manual pass in desktop Anki | Two independent verifications done; all Critical/High findings are either fixed or now end in a clean refusal (contract rules 9 to 13). After the last round the orchestrator re-ran the matrix (engine 72, acceptance 87 on all 8 headless versions; ui 47; flow 88 on aqt 25.02.7, 71 on 26.09.4) and the second verifier's 17 scenarios on 25.02.7/py3.9 and 26.11b1: every completed import keeps all user data; every unsafe note type move is refused with the collection unchanged. Beta build made: `special_fields_by_ankoma-0.1.0-beta2.ankiaddon` (in the Desktop folder under `builds/`; loads under a numeric folder name in both Qt environments). NOT yet run in a real Anki: that manual pass is next and needs the author |
 | 6. Author beta with a real v1.3 | Not started; needs a v1.3 file from the author |
 | 7. Release (F): AnkiWeb upload by the author, ankomapath.com page | Not started |
 
@@ -88,9 +88,18 @@ Design decision after this round: stop patching Anki's merge case by case; the e
 
 **For the author's beta:** export v1.3 from the same collection as v1.2 so note type ids match; a mismatch no longer blocks the import but makes every note go through the move-and-clean-up path. Orchestrator's experiment script for author-side note type moves: `/tmp/sfa-pm/nt/exp.py` (session-local; result recorded in contract rule 10).
 
+### Author feedback after first trying beta1 (17 Nov 2026)
+
+The author installed beta1 and reported that it looked like it worked (what exactly was tried, and whether on a copy of the profile, is not yet known: ask). Two changes requested and made in beta2, settings window only:
+
+- Protected tag picker: no Select button. The first match is highlighted; Enter adds the highlighted tag; one click on any tag in the list adds it. Nothing is highlighted when the typed text is itself an already protected tag.
+- No message after a tag is added or removed. The hint line under the box shows only for: no match, already protected, list cut short.
+
+The "+ Add field" picker still shows 'Added "X". It starts as "Take the update\'s".' after adding a field; offered to the author, not changed.
+
 ### Next steps
 
-1. Manual pass in desktop Anki on a COPY of the author's profile, with the author's go-ahead: install `builds/special_fields_by_ankoma-0.1.0-beta1.ankiaddon` (Tools → Add-ons → Install from file), then check: the Tools menu item; the settings window; the question on double-click, drag-and-drop and File → Import; progress; the summary; Edit → Undo label; a backup appears in the profile's backups folder; sync.
+1. Manual pass in desktop Anki on a COPY of the author's profile, with the author's go-ahead: install `builds/special_fields_by_ankoma-0.1.0-beta2.ankiaddon` (Tools → Add-ons → Install from file), then check: the Tools menu item; the settings window; the question on double-click, drag-and-drop and File → Import; progress; the summary; Edit → Undo label; a backup appears in the profile's backups folder; sync.
 2. Author decisions still open: (a) invest in making more kinds of note type move succeed, or avoid moving notes between note types in releases; (b) run `tools/check_shared_ids.py` on a COPY of the collection (do Ankoma's note types share ids?); (c) accept or not: when notes move in both directions between two note types, each type keeps the other's non-clashing fields as empty fields (no data lost); (d) the pre-import backup (rule 11) and rule 9; (e) license for the public repository; (f) what the Unrestricted note types are; (g) a v1.3 file for the beta.
 3. After the manual pass: fix what it finds, bump `human_version` in `manifest.json`, rebuild with `python3 tools/build_addon.py`, then the author's beta with a real v1.3.
 4. Release: author reviews `docs/USER_GUIDE.md` and `docs/ANKIWEB_LISTING.md`, uploads to AnkiWeb; ankomapath.com page after the author approves its content. The plan doc (claude.ai artifact) now ends with a section summarising rules 9 to 13; `docs/CONTRACT.md` remains the current, binding spec.
