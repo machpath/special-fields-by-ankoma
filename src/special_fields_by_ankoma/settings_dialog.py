@@ -52,7 +52,10 @@ FIELDS_HELP = (
     "Matched by field name, so field order doesn't matter. "
     "A field a note type doesn't have is skipped for that type."
 )
-NO_FIELDS_TEXT = "No fields listed. Every field takes the update's content."
+NO_FIELDS_TEXT = (
+    "No fields listed. Every field takes the update's content. Where the update "
+    "leaves a field empty on every card, your text in it stays."
+)
 TAGS_HEADING = "Protected tags"
 TAGS_HELP = (
     "An update never removes these tags from your notes, even when tags are "
