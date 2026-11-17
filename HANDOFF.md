@@ -30,7 +30,7 @@ Last updated: 2026-11-16, evening (Pacific).
 | 2. Foundation (A): layout, `model.py`, `config.py`, `docs/CONTRACT.md` | Done |
 | 3. Parallel build: engine (B), settings window (C), test harness (D) | Done and saved. Gate met: the orchestrator ran `bash tools/run_matrix.sh --no-create` and saw `tests/engine` 26/26 and `tests/acceptance` 75/75 pass on 25.02.7 (Py 3.9 and 3.13), 25.07.5, 25.09.5, 26.05, 26.08.1, 26.09.4, 26.11b1, and `tests/ui` 46/46 on aqt 25.02.7 and 26.09.4 |
 | 4. Integration: import flow (E) | Done and saved: `import_flow.py` (question on every .apkg, progress, summary with undo, Tools menu item; also wraps the old `aqt.importing.importFile` route as a safety net) + `tests/flow/`. Gate met: orchestrator ran the matrix and saw engine 26/26 and acceptance 75/75 on all 8 headless versions, ui 46/46 and flow 77/60 passed on aqt 25.02.7 / 26.09.4 |
-| 5. Independent verification (G) + manual pass in desktop Anki | G agent launched (read-only on the project, works in /tmp/sfa-g); findings not received yet. Manual pass not started |
+| 5. Independent verification (G) + manual pass in desktop Anki | G reported (findings below). Fix agent launched for the engine, import flow, settings labels and tests; its work is NOT yet reviewed, saved or pushed. Orchestrator already fixed `config.py` (hand-edited settings) and the docs. Manual pass not started |
 | 6. Author beta with a real v1.3 | Not started; needs a v1.3 file from the author |
 | 7. Release (F): AnkiWeb upload by the author, ankomapath.com page | Not started |
 
@@ -45,14 +45,35 @@ Last updated: 2026-11-16, evening (Pacific).
 
 If a file named above or in the status table is missing here, that work had not been reviewed and saved when the session ended: relaunch that workstream from `docs/CONTRACT.md`.
 
+### Verification findings (workstream G, 2026-11-16) and their status
+
+Verdict: safe for the author to trial on a COPY of a profile; not ready for users until the Critical and High items are fixed.
+
+| # | Severity | Finding | Status |
+| --- | --- | --- | --- |
+| C1 | Critical | Fields not listed in the settings were blanked on every updated note, including fields the user added themselves | Fix in progress: contract rule 9 (an update never blanks a field it has no content for) |
+| H1 | High | When a note's note type differs between the file and the collection, Anki's forced merge made duplicate "+" fields, hid kept values in them, and brought the author's styling even with the switch off | Fix in progress: contract rule 10 (roll back and refuse with a clear message) |
+| M1 | Medium | Hand-edited config: `"keep": "false"` read as true, `"update_note_types": "false"` read as true, a single-string `protected_tags` ignored | Fixed in `config.py` (+ `tests/engine/test_config_reading.py`) |
+| M2 | Medium | Full-sync advice could lose reviews from other devices | Docs fixed; dialog texts in progress |
+| M3 | Medium | Keeping cloze Text while the update adds a cloze number leaves a blank card | Documented in the user guide |
+| M4 | Medium | User guide overclaimed the styling switch | Reworded |
+| L1 | Low | Markup in field/tag names rendered as rich text in Settings | Fix in progress |
+| L2 | Low | The question also appears for `.zip` files (Anki's importer accepts them) | Accepted, not documented |
+| L3 | Low | Small wording differences from the mocks (summary heading "Update complete") | Accepted |
+| L4 | Low | A note whose local and author edit share the same second is skipped as unchanged | Accepted (Anki behaviour) |
+| L5 | Low | Acceptance oracle ignored fields absent from the update; two assertions could not fail | Fix in progress |
+| L6 | Low | Deck option presets in a file are not imported | Documented |
+
+The verifier's scripts are in `/tmp/sfa-g/` of the session that ran them (not saved). Not checked by anyone yet: a real running Anki, media handling (whether Undo removes imported media), GUI on Python 3.9.
+
+**For the author's beta:** confirm v1.3's note type ids equal v1.2's (export both from the same collection). If they differ, every note hits rule 10 and nothing imports.
+
 ### Next steps
 
-1. Read workstream G's findings; fix anything Critical or High (send fixes to an Opus medium agent, then rerun `bash tools/run_matrix.sh --no-create`). If no findings were recorded here, relaunch G: a fresh agent reviews `src/` against `docs/CONTRACT.md` and writes its own adversarial tests outside the project tree.
+1. Review the fix agent's report; rerun `bash tools/run_matrix.sh --no-create`; confirm the C1 and H1 scenarios yourself. If `engine.py` has no `NoteTypeMismatchError`, the fixes were not saved: redo them from contract rules 9 and 10.
 2. Build the add-on file: `python3 tools/build_addon.py` (writes `dist/special_fields_by_ankoma-<version>.ankiaddon`).
 3. Manual pass in desktop Anki on a COPY of a profile (question appears for double-click, drag-and-drop and File → Import; progress bar; undo label; sync), then the author's beta with a real v1.3.
-4. Release: author reviews `docs/USER_GUIDE.md` and `docs/ANKIWEB_LISTING.md` (support link points to the machpath repository's Issues page), uploads to AnkiWeb; ankomapath.com page after the author approves its content.
-
-GitHub: the code is hosted at https://github.com/machpath/special-fields-by-ankoma (public; created and first pushed by the orchestrator on 2026-11-16 at the author's request, branch `main`). The author connected the machpath account to Claude's GitHub access, so a session can attach the repository with push access. Push at every checkpoint: the repository is now the most reliable copy (it doesn't need the author's PC to be on); the Desktop folder is kept in step. No license file has been chosen yet: ask the author.
+4. Release: author reviews `docs/USER_GUIDE.md` and `docs/ANKIWEB_LISTING.md`, uploads to AnkiWeb; ankomapath.com page after the author approves its content.
 
 Run the tests with `bash tools/run_matrix.sh` (the folder mount ignores the executable bit). Full-size import (18,600 notes, 7,400 fields and 7,440 tags restored) measured 2.3 to 2.6 s; accepted.
 
@@ -62,6 +83,7 @@ Run the tests with `bash tools/run_matrix.sh` (the folder mount ignores the exec
 - Engine: the user's own settings for Anki's standard import screen are put back after each Special Fields import (Anki would otherwise overwrite them with "always update").
 - Engine: with templates-and-styling off, existing templates and CSS stay identical, but a brand-new card template added by an update is still added.
 - Settings window: the tag picker's Select button is plain (the accent is reserved for selections and Save); `open_settings(mw, parent=None)` takes an optional parent for the import flow.
+- After verification: unlisted fields the update has no content for are left alone (rule 9); a note type mismatch refuses the whole import (rule 10); the question dialog gains a one-line "sync first" tip. The author has been told about rules 9 and 10 but has not explicitly confirmed them.
 - Legacy import: `ProfileManager.legacy_import_export()` is hard-coded to False on every supported version, so the old importer can't be reached from the UI; the legacy wrap is defence in depth only.
 - Re-importing the same file reports unchanged notes as skipped (reason `unchanged`); the summary dialog should leave that reason out.
 

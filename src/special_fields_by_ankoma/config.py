@@ -45,6 +45,32 @@ def default_config() -> Dict[str, Any]:
     return settings_to_config(default_settings())
 
 
+_TRUE_WORDS = ("true", "yes", "on", "1")
+_FALSE_WORDS = ("false", "no", "off", "0")
+
+
+def _read_bool(raw: Any, default: bool) -> bool:
+    """Read a yes/no value a user may have typed by hand.
+
+    Real booleans are taken as they are. The words true/false, yes/no, on/off
+    and the numbers 1/0 are understood. Anything else gives `default`, so a
+    typo never silently flips a choice.
+    """
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, int):
+        if raw in (0, 1):
+            return bool(raw)
+        return default
+    if isinstance(raw, str):
+        word = raw.strip().casefold()
+        if word in _TRUE_WORDS:
+            return True
+        if word in _FALSE_WORDS:
+            return False
+    return default
+
+
 def _read_fields(raw: Any) -> Optional[Tuple[FieldChoice, ...]]:
     if not isinstance(raw, list):
         return None
@@ -60,11 +86,13 @@ def _read_fields(raw: Any) -> Optional[Tuple[FieldChoice, ...]]:
         if key in seen:
             continue
         seen.add(key)
-        out.append(FieldChoice(name.strip(), bool(item.get("keep", False))))
+        out.append(FieldChoice(name.strip(), _read_bool(item.get("keep", False), False)))
     return tuple(out)
 
 
 def _read_tags(raw: Any) -> Tuple[str, ...]:
+    if isinstance(raw, str):
+        raw = [raw]  # a single tag typed without the list brackets
     if not isinstance(raw, list):
         return ()
     out: List[str] = []
@@ -88,9 +116,8 @@ def settings_from_config(cfg: Optional[Dict[str, Any]]) -> Settings:
     fields = _read_fields(cfg.get("fields"))
     if fields is None:
         fields = defaults.fields
-    update = cfg.get("update_note_types", defaults.update_note_types)
     return Settings(
         fields=fields,
         protected_tags=_read_tags(cfg.get("protected_tags")),
-        update_note_types=bool(update) if isinstance(update, (bool, int)) else True,
+        update_note_types=_read_bool(cfg.get("update_note_types"), defaults.update_note_types),
     )

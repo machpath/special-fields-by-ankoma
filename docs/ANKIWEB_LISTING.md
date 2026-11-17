@@ -28,7 +28,7 @@ Built for the [Ankoma](https://ankomapath.com) pathology deck. Works with any de
 
 - **Fields.** For each field, choose "Keep mine" or "Take the update's". By default only Personal Notes is kept. Add any field from your own note types.
 - **Tags.** Updates replace a note's tags with the author's. Protect the tags you want to keep and an update will never remove them.
-- **Card templates and styling.** Choose whether updates can change how your cards look.
+- **Card templates and styling.** Choose whether updates can change how your existing cards look.
 
 ### Always kept
 
@@ -49,7 +49,8 @@ Anki 25.02 or newer on Windows, Mac or Linux. Phones and tablets receive the res
 
 - The question appears each time you open an .apkg file. Choose "Use Anki's standard import" to import as if the add-on weren't installed.
 - Notes removed in a new release are not deleted from your collection.
-- If an update changes a note type, Anki will ask for a one-way full sync. Choose "Upload to AnkiWeb".
+- Sync this computer before updating if you've studied on another device. If an update changes a note type, Anki will ask for a one-way full sync; choose "Upload to AnkiWeb".
+- If a file uses different note types than the same notes in your collection, nothing is imported and a message explains why.
 
 ### Support
 
