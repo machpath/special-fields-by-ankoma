@@ -50,7 +50,7 @@ Anki 25.02 or newer on Windows, Mac or Linux. Phones and tablets receive the res
 - The question appears each time you open an .apkg file. Choose "Use Anki's standard import" to import as if the add-on weren't installed.
 - Notes removed in a new release are not deleted from your collection.
 - Sync this computer before updating if you've studied on another device. If an update changes a note type, Anki will ask for a one-way full sync; choose "Upload to AnkiWeb".
-- If a file uses different note types than the same notes in your collection, nothing is imported and a message explains why.
+- If an update moves notes to a different note type, the add-on follows the move and keeps your kept fields.
 
 ### Support
 

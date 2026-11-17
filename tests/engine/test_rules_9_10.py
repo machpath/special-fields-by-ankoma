@@ -450,3 +450,149 @@ def test_failed_import_cannot_be_redone(user_col, world, monkeypatch):
     assert status.undo == prior.undo and status.redo != UNDO_LABEL
     col.undo()  # the user's own step really is the one on top
     assert g(col, "B2")["Personal Notes"] != "last user action"
+
+
+# ---------------------------------------------------------------------------
+# Rule 10g: a merge that cannot be repaired safely rolls the import back
+
+
+def _move_world(tmp, ap_tmpls=None, mi_tmpls=None):
+    """Author's AP and MI (standard), user has v1 plus an own MI note "ddd";
+    everything reviewed; then the author moves "aaa" from AP to MI."""
+    os.makedirs(tmp, exist_ok=True)
+    a = Collection(os.path.join(tmp, "author.anki2"))
+    for name, flds, tmpls in (("AP", AP, ap_tmpls), ("MI", MI, mi_tmpls)):
+        nt = _new_nt(a, name, flds)
+        if tmpls:
+            nt["tmpls"] = []
+            for tname, qfmt in tmpls:
+                t = a.models.new_template(tname)
+                t["qfmt"] = qfmt
+                t["afmt"] = "{{FrontSide}}<hr id=answer>{{Extra}}"
+                a.models.add_template(nt, t)
+            a.models.update_dict(nt)
+    for guid, nt in (("aaa", "AP"), ("bbb", "AP"), ("ccc", "MI")):
+        _add(a, nt, "Rel", guid, {"Header": "H " + guid, "Text": "T " + guid}, ["v1"])
+    a.db.execute("update notes set mod=1000000")
+    v1 = _export(a, os.path.join(tmp, "v1.apkg"))
+    time.sleep(0.01)
+    u = Collection(os.path.join(tmp, "user.anki2"))
+    _stock_import(u, v1)
+    _add(u, "MI", "Mine", "ddd", {"Header": "my own", "Text": "ddd text"}, ["mine"])
+    _review_everything(u)
+    u.db.execute("update notes set mod=3000000")
+    _move(a, "aaa", "MI")
+    a.db.execute("update notes set mod=2000000")
+    v2 = _export(a, os.path.join(tmp, "v2.apkg"))
+    a.close()
+    return u, v2
+
+
+def _assert_refused(col, v2, settings=None, user_step=True):
+    from special_fields_by_ankoma.engine import MergeRepairError
+
+    if user_step:
+        n = g(col, "ddd")
+        n["Extra"] = "my last edit"
+        col.update_note(n)
+    prior = col.undo_status()
+    before = dump(col)
+    with pytest.raises(MergeRepairError) as err:
+        run_import(col, v2, settings or S(keep=("Personal Notes",)))
+    assert "MI" in str(err.value) and err.value.notetype == "MI"
+    assert dump(col) == before
+    status = col.undo_status()
+    assert status.undo == prior.undo
+    assert status.redo == ""
+    if user_step:
+        col.undo()  # the user's own step really is the one on top
+        assert g(col, "ddd")["Extra"] == ""
+    return err.value
+
+
+@pytest.mark.parametrize("user_step", [True, False], ids=["after-user-step", "empty-undo-queue"])
+def test_rule10g_anki_refuses_the_repaired_note_type(tmp_path, user_step):
+    """Constructed for real: the old note type's second template has the
+    same front as the target type's template once the merge's references
+    are repaired, so Anki refuses the repaired note type ("front side is
+    identical"). Checked on a scratch collection before anything changes."""
+    col, v2 = _move_world(str(tmp_path),
+                          ap_tmpls=[("Card 1", "{{Text}}"), ("Card 2", "{{Header}}<br>{{Text}}")],
+                          mi_tmpls=[("Card 1", "{{Header}}<br>{{Text}}")])
+    try:
+        if not user_step:
+            col.db.execute("update col set mod=mod")  # a raw write empties the undo queue
+            assert col.undo_status().undo == ""
+        e = _assert_refused(col, v2, user_step=user_step)
+        assert "identical" in e.reason
+    finally:
+        col.close()
+
+
+def test_rule10g_untouched_note_cannot_be_put_back(tmp_path):
+    """Constructed for real, with a damaged note: the user's own MI note
+    (not in the file) has one value more than its note type has fields, so
+    its pre-import content cannot be mapped back exactly."""
+    col, v2 = _move_world(str(tmp_path))
+    try:
+        col.db.execute("update notes set flds = flds || char(31) || 'stray' where id=?", g(col, "ddd").id)
+        e = _assert_refused(col, v2, user_step=False)
+        assert "cannot be put back" in e.reason
+    finally:
+        col.close()
+
+
+def test_rule10g_duplicate_card_existed_before(tmp_path, monkeypatch):
+    """Monkeypatched (I found no honest way to make Anki's merge leave a
+    pre-existing or reviewed card on the original template next to a card
+    on the "+" template): the snapshot's card ids claim every card existed
+    before the import, so removing the duplicate would remove a real card."""
+    from special_fields_by_ankoma import engine
+
+    class Everything(set):
+        def __contains__(self, item):
+            return True
+
+    real = engine._snapshot
+
+    def snapshot(col):
+        snap = real(col)
+        snap.card_ids = Everything(snap.card_ids)
+        return snap
+
+    monkeypatch.setattr(engine, "_snapshot", snapshot)
+    col, v2 = _move_world(str(tmp_path))
+    try:
+        e = _assert_refused(col, v2)
+        assert "existed before" in e.reason
+    finally:
+        col.close()
+
+
+def test_rule10g_any_error_inside_the_repair_rolls_back(tmp_path, monkeypatch):
+    """Monkeypatched: an unexpected Python error in the middle of the repair
+    (after notes were already put back) still rolls everything back."""
+    col, v2 = _move_world(str(tmp_path))
+    try:
+        def boom(*a, **k):
+            raise RuntimeError("simulated failure while moving cards")
+
+        monkeypatch.setattr(col.models, "change_notetype_of_notes", boom)
+        e = _assert_refused(col, v2)
+        assert "simulated failure" in e.reason
+    finally:
+        col.close()
+
+
+def test_rule10g_same_world_without_the_problem_imports(tmp_path):
+    """Control for the tests above: the same world with compatible templates
+    is repaired and imported."""
+    col, v2 = _move_world(str(tmp_path))
+    try:
+        res = run_import(col, v2, S(keep=("Personal Notes",)))
+        assert res.notes_updated == 3
+        col.models._clear_cache()
+        assert g(col, "aaa").note_type()["name"] == "MI"
+        assert not any(f["name"].endswith("+") for f in col.models.by_name("MI")["flds"])
+    finally:
+        col.close()

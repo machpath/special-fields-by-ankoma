@@ -350,3 +350,152 @@ def test_op_returns_result_with_changes(fake_mw, apkg, monkeypatch):
     res = captured["op"](fake_mw.col)
     assert isinstance(res, ImportResult)
     assert res.changes is not None
+
+
+# --------------------------------------------------------------------------
+# A note type move the engine cannot repair (contract rule 10g)
+
+
+def _unrepairable_move(make_col, mw, tmp_path):
+    """Author's "SFA AP" (templates "{{Text}}" and "{{Header}} {{Text}}")
+    and "SFA MI" (template "{{Header}} {{Text}}"); the user has v1 plus an
+    own MI note; the author moves one AP note to MI. Repairing Anki's merge
+    would leave MI with two identical card fronts, which Anki refuses, so
+    the engine raises MergeRepairError (built for real, nothing mocked)."""
+    import time
+
+    from anki.collection import (ExportAnkiPackageOptions, ImportAnkiPackageOptions,
+                                 ImportAnkiPackageRequest)
+
+    def nt(col, name, fields, fronts):
+        mm = col.models
+        m = mm.new(name)
+        for f in fields:
+            mm.add_field(m, mm.new_field(f))
+        for i, front in enumerate(fronts):
+            t = mm.new_template("Card %d" % (i + 1))
+            t["qfmt"] = front
+            t["afmt"] = "{{FrontSide}}<hr id=answer>{{Extra}}"
+            mm.add_template(m, t)
+        mm.add(m)
+        time.sleep(0.002)
+        return mm.by_name(name)
+
+    def export(col, path):
+        col.export_anki_package(out_path=path, options=ExportAnkiPackageOptions(
+            with_scheduling=False, with_deck_configs=False, with_media=True, legacy=False), limit=None)
+        return path
+
+    author = make_col("unrepairable-author")
+    ap = nt(author, "SFA AP", ["Header", "Text", "Extra"], ["{{Text}}", "{{Header}} {{Text}}"])
+    mi = nt(author, "SFA MI", ["Header", "Text", "Images", "Extra"], ["{{Header}} {{Text}}"])
+    for guid, m in (("u1", ap), ("u2", ap), ("u3", mi)):
+        note = author.new_note(m)
+        note["Header"] = "H " + guid
+        note["Text"] = "T " + guid
+        note.guid = guid
+        author.add_note(note, author.decks.id("Move Deck"))
+    author.db.execute("update notes set mod=1000000")
+    v1 = export(author, str(tmp_path / "move-v1.apkg"))
+    col = mw.col
+    col.import_anki_package(ImportAnkiPackageRequest(package_path=v1, options=ImportAnkiPackageOptions()))
+    col.db.execute("update notes set mod=3000000")
+    note = col.get_note(col.find_notes("")[0])
+    note["Extra"] = "my last edit"
+    col.update_note(note)
+    info = author.models.change_notetype_info(old_notetype_id=ap["id"], new_notetype_id=mi["id"])
+    req = info.input
+    req.note_ids.extend([author.db.scalar("select id from notes where guid='u1'")])
+    author.models.change_notetype_of_notes(req)
+    author.db.execute("update notes set mod=2000000")
+    return export(author, str(tmp_path / "move-v2.apkg"))
+
+
+def test_unrepairable_move_shows_plain_warning_and_imports_nothing(fake_mw, pristine_importer, make_col,
+                                                                  tmp_path, qapp, monkeypatch):
+    from aqt.qt import QMessageBox, QTimer
+
+    importing = pristine_importer
+    mw = fake_mw
+    flow.setup(mw)
+    path = _unrepairable_move(make_col, mw, tmp_path)
+    errors = []
+    import aqt.operations
+
+    monkeypatch.setattr(aqt.operations, "show_exception",
+                        lambda *, parent, exception: errors.append(exception))
+    before = {t: mw.col.db.all("select * from %s order by 1" % t)
+              for t in ("notes", "cards", "revlog", "notetypes", "fields", "templates")}
+    before_undo = mw.col.undo_status()
+    assert before_undo.undo == "Update Note"
+    seen = {}
+
+    def poll_box():
+        for w in QApplication.topLevelWidgets():
+            if isinstance(w, QMessageBox) and w.isVisible():
+                seen.update(text=w.text(), fmt=w.textFormat(), icon=w.icon(), title=w.windowTitle(),
+                            parent=w.parent())
+                w.accept()
+                return
+        seen["tries"] = seen.get("tries", 0) + 1
+        if seen["tries"] < 500:
+            QTimer.singleShot(10, poll_box)
+
+    def in_question(dlg):
+        poll_box()
+        QTest.mouseClick(dlg.import_button, Qt.MouseButton.LeftButton)
+
+    when_shown("special_fields_question", in_question)
+    importing.import_file(mw, path)
+    assert _wait(qapp, lambda: "text" in seen)
+    assert errors == [], "Anki's exception dialog must not be used"
+    assert seen["text"] == (
+        "Nothing was imported. This file moves some notes to a different note type, and "
+        "Special Fields couldn't apply that change safely to your collection. Your collection "
+        "is unchanged. You can import this file with Anki's standard import instead, or ask "
+        "the deck's author for help."
+    )
+    assert seen["text"] == flow.MERGE_REPAIR_WARNING
+    assert seen["fmt"] == Qt.TextFormat.PlainText
+    assert seen["icon"] == QMessageBox.Icon.Warning
+    assert seen["title"] == ADDON_NAME
+    for _ in range(20):
+        qapp.processEvents()
+        QTest.qWait(10)
+    assert find_top_level("special_fields_summary") is None
+    mw.col.models._clear_cache()
+    after = {t: mw.col.db.all("select * from %s order by 1" % t) for t in before}
+    assert after == before
+    status = mw.col.undo_status()
+    assert status.undo == before_undo.undo and status.redo == ""
+    assert mw.background_ops == 0
+
+
+def test_other_engine_errors_keep_anki_error_dialog(fake_mw, monkeypatch):
+    """Only MergeRepairError gets the plain warning."""
+    import aqt.operations
+    import aqt.utils
+
+    from special_fields_by_ankoma import engine
+
+    errors, warnings = [], []
+    monkeypatch.setattr(aqt.operations, "show_exception",
+                        lambda *, parent, exception: errors.append((parent, exception)))
+    monkeypatch.setattr(aqt.utils, "showWarning", lambda *a, **k: warnings.append((a, k)))
+    monkeypatch.setattr(flow, "_later", lambda mw, f: None)
+    boom = RuntimeError("boom")
+
+    def raise_(exc):
+        def run(col, path, settings):
+            raise exc
+        return run
+
+    monkeypatch.setattr(engine, "run_import", raise_(boom))
+    flow.run_import_with_choices(fake_mw, "/x/deck.apkg", load_settings(fake_mw))
+    assert errors == [(fake_mw, boom)] and warnings == []
+    monkeypatch.setattr(engine, "run_import", raise_(engine.MergeRepairError("SFA MI", "test")))
+    flow.run_import_with_choices(fake_mw, "/x/deck.apkg", load_settings(fake_mw))
+    assert len(errors) == 1 and len(warnings) == 1
+    (args, kwargs) = warnings[0]
+    assert args[0] == flow.MERGE_REPAIR_WARNING
+    assert kwargs.get("textFormat") == "plain" and kwargs.get("title") == ADDON_NAME

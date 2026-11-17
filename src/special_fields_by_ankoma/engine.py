@@ -27,7 +27,11 @@ nothing from `aqt`. Python 3.9 compatible.
 
 from __future__ import annotations
 
+import copy
+import os
 import re
+import shutil
+import tempfile
 import time
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
@@ -74,6 +78,21 @@ _MISSING = object()
 # Pre-import fields of one note type, by position: (field config id or None,
 # normalized name).
 _FieldInfo = List[Tuple[Optional[int], str]]
+
+
+class MergeRepairError(Exception):
+    """Contract rule 10g: Anki's forced note type merge left a note type in a
+    state the engine cannot repair safely (blank and duplicate cards would
+    remain). Raised after the whole import has been rolled back, so the
+    collection is exactly as it was. `notetype` names the note type."""
+
+    def __init__(self, notetype: str, reason: str) -> None:
+        self.notetype = notetype
+        self.reason = reason
+        super().__init__(
+            "Nothing was imported: the update moves notes to note type %r, and "
+            "Anki's note type merge could not be repaired safely (%s)." % (notetype, reason)
+        )
 
 
 class _Snapshot:
@@ -426,21 +445,29 @@ def _clean_merge_leftovers(col: Collection, snap: _Snapshot, touched: Set[int]) 
     original template, replacing the duplicate there only if that duplicate
     is a new card this import created with no review history; then repoints
     template references from "<name>+" to "<name>" and removes the leftover
-    fields and templates. If any check fails, or Anki refuses an edit, the
-    note type is left as it is (data is never risked) and the import still
-    finishes. Returns the number of note types cleaned."""
+    fields and templates. A leftover field that holds content is kept (not
+    a failure). Returns the number of note types cleaned.
+
+    Rule 10g: if the repair cannot be completed safely for a note type,
+    raise MergeRepairError; `run_import` then rolls the whole import back
+    (every edit made here is an undoable op inside our undo step, and all
+    checks run before the first edit of each note type)."""
     cleaned = 0
-    for nt in col.models.all():
-        try:
-            if _clean_notetype(col, int(nt["id"]), snap, touched):
-                cleaned += 1
-        except Exception:
-            # Leave this note type as Anki made it; the edits already made
-            # (all undoable, inside our undo step) only moved cards or put
-            # notes back as they were.
-            pass
-        finally:
-            _clear_notetype_cache(col)
+    validator = _Validator()
+    try:
+        for nt in col.models.all():
+            name = str(nt.get("name", nt["id"]))
+            try:
+                if _clean_notetype(col, int(nt["id"]), snap, touched, validator):
+                    cleaned += 1
+            except MergeRepairError:
+                raise
+            except Exception as exc:
+                raise MergeRepairError(name, "the repair failed: %s" % exc) from exc
+            finally:
+                _clear_notetype_cache(col)
+    finally:
+        validator.close()
     return cleaned
 
 
@@ -494,7 +521,61 @@ def _leftover_templates(nt: Dict[str, Any], pre_ids: Set[Any]) -> Dict[int, int]
     return out
 
 
-def _clean_notetype(col: Collection, mid: int, snap: _Snapshot, touched: Set[int]) -> bool:
+def _repaired(nt: Dict[str, Any], leftovers: Dict[int, int], tmpl_leftovers: Dict[int, int]) -> Dict[str, Any]:
+    """`nt` with template references from leftover fields pointed back at the
+    fields they duplicate, and the leftover fields and templates removed."""
+    renames = {nt["flds"][i]["name"]: nt["flds"][j]["name"] for i, j in leftovers.items()}
+    for t in nt["tmpls"]:
+        for key in ("qfmt", "afmt", "bqfmt", "bafmt"):
+            if t.get(key):
+                t[key] = _rename_refs(t[key], renames)
+    if tmpl_leftovers:
+        nt["tmpls"] = [t for i, t in enumerate(nt["tmpls"]) if i not in tmpl_leftovers]
+    nt["flds"] = [f for i, f in enumerate(nt["flds"]) if i not in leftovers]
+    return nt
+
+
+class _Validator:
+    """Anki's own note type checks, run on a throwaway collection.
+
+    A backend operation that fails discards Anki's whole undo queue (rslib
+    `transact_inner`), so after the native import a failing note type edit
+    could no longer be rolled back. The repaired note type is therefore
+    first added to an empty scratch collection: if Anki refuses it there,
+    nothing in the user's collection has been touched yet."""
+
+    def __init__(self) -> None:
+        self._dir: Optional[str] = None
+        self._col: Optional[Collection] = None
+
+    def check(self, nt: Dict[str, Any]) -> Optional[str]:
+        if self._col is None:
+            self._dir = tempfile.mkdtemp(prefix="sfa-validate-")
+            self._col = Collection(os.path.join(self._dir, "scratch.anki2"))
+        trial = copy.deepcopy(nt)
+        trial["id"] = 0
+        trial["name"] = str(nt.get("name") or "check")
+        try:
+            self._col.models.add_dict(trial)
+        except Exception as exc:
+            return str(exc)
+        return None
+
+    def close(self) -> None:
+        if self._col is not None:
+            try:
+                self._col.close(downgrade=False)
+            except Exception:
+                pass
+            self._col = None
+        if self._dir:
+            shutil.rmtree(self._dir, ignore_errors=True)
+            self._dir = None
+
+
+def _clean_notetype(
+    col: Collection, mid: int, snap: _Snapshot, touched: Set[int], validator: "_Validator"
+) -> bool:
     nt = col.models.get(mid)
     if not nt:
         return False
@@ -521,7 +602,8 @@ def _clean_notetype(col: Collection, mid: int, snap: _Snapshot, touched: Set[int
                 if idx is not None and i < len(old_vals):
                     new_vals[idx] = old_vals[i]
             if len(old_vals) != len(pre_fields) or None in fmap:
-                return False  # cannot map it back exactly: leave the type alone
+                raise MergeRepairError(
+                    nt["name"], "a note the file does not contain cannot be put back exactly")
             if new_vals != vals:
                 fixes[nid] = new_vals
             vals = new_vals
@@ -562,8 +644,16 @@ def _clean_notetype(col: Collection, mid: int, snap: _Snapshot, touched: Set[int
             for o in on_leftover:
                 dup = by_ord.get(tmpl_leftovers[o])
                 if dup is not None and (dup in snap.card_ids or dup in reviewed):
-                    return False  # two real cards for one card type: leave it
+                    raise MergeRepairError(
+                        nt["name"], "a card that would have to be removed existed before the "
+                        "import or has review history")
             groups.setdefault(on_leftover, []).append(nid)
+
+    # 4. Anki must accept the repaired note type (checked on a scratch
+    #    collection, before anything here is changed).
+    problem = validator.check(_repaired(copy.deepcopy(nt), leftovers, tmpl_leftovers))
+    if problem:
+        raise MergeRepairError(nt["name"], "Anki refused the repaired note type: %s" % problem)
 
     # --- apply ---------------------------------------------------------------
     if fixes:
@@ -589,20 +679,12 @@ def _clean_notetype(col: Collection, mid: int, snap: _Snapshot, touched: Set[int
         col.models.change_notetype_of_notes(req)
     _clear_notetype_cache(col)
 
-    # 4. Template references back to the real field names, then remove the
+    # 5. Template references back to the real field names, then remove the
     #    leftover templates (now without cards) and fields (empty).
     nt = col.models.get(mid)
     if nt is None or len(nt["flds"]) != len(post_fields):
-        return False
-    renames = {nt["flds"][i]["name"]: nt["flds"][j]["name"] for i, j in leftovers.items()}
-    for t in nt["tmpls"]:
-        for key in ("qfmt", "afmt", "bqfmt", "bafmt"):
-            if t.get(key):
-                t[key] = _rename_refs(t[key], renames)
-    if tmpl_leftovers:
-        nt["tmpls"] = [t for i, t in enumerate(nt["tmpls"]) if i not in tmpl_leftovers]
-    nt["flds"] = [f for i, f in enumerate(nt["flds"]) if i not in leftovers]
-    col.models.update_dict(nt)
+        raise MergeRepairError(str(mid), "the note type changed during the repair")
+    col.models.update_dict(_repaired(nt, leftovers, tmpl_leftovers))
     return True
 
 
@@ -679,18 +761,39 @@ def _roll_back(col: Collection, undo_pos: int, prior: Any = None) -> None:
     _clear_notetype_cache(col)
 
 
+# A config key every collection has; writing its own value back is a no-op
+# on disk but runs as a non-undoable backend operation, which empties Anki's
+# undo and redo queues (rslib transact_no_undo).
+_QUEUE_CLEARING_KEY = "sortType"
+
+
 def _forget_redo(col: Collection, prior: Any) -> None:
     """After a roll-back our undone step sits on Anki's redo stack, and Redo
     would apply the failed import half-done (for example the native import
-    without the user's kept fields put back). Any new undo entry empties the redo stack; the new,
-    empty entry is then folded into the user's own top step when that step
-    can be identified (`prior` = undo status before the import; the top
-    step's id is `last_step` when nothing was waiting to be redone), else
-    undone again, which leaves only that empty, harmless entry to redo.
-    Either way the user's own step is back on top."""
+    without the user's kept fields put back). Leave nothing to redo, and the
+    user's own step on top:
+
+    * the user had steps to undo: a new undo entry empties the redo stack;
+      that empty entry is folded into the user's own top step (identified by
+      `prior`, the undo status before the import: its id is `last_step`
+      when nothing was waiting to be redone);
+    * the user had nothing to undo: a no-op, non-undoable backend operation
+      (writing a config value back unchanged) empties both queues; nothing
+      of the user's is lost because the undo queue was empty anyway;
+    * otherwise the empty entry is undone again, so only that empty,
+      harmless entry is left to redo."""
     status = col.undo_status()
     if status.redo != UNDO_LABEL:
         return
+    if prior is not None and not prior.undo and not status.undo:
+        value = col.get_config(_QUEUE_CLEARING_KEY, _MISSING)
+        if value is not _MISSING:
+            try:
+                col.set_config(_QUEUE_CLEARING_KEY, value, undoable=False)
+            except Exception:
+                pass
+            if not col.undo_status().redo:
+                return
     pos = col.add_custom_undo_entry(UNDO_LABEL)
     if prior is not None and prior.undo and not prior.redo and prior.undo == status.undo:
         try:

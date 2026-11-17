@@ -75,6 +75,12 @@ FULL_SYNC_NOTICE = (
     "updated copy is kept. If you studied on another device and hadn't "
     "synced this computer first, undo this update, sync, then import again."
 )
+MERGE_REPAIR_WARNING = (
+    "Nothing was imported. This file moves some notes to a different note type, "
+    "and Special Fields couldn't apply that change safely to your collection. "
+    "Your collection is unchanged. You can import this file with Anki's standard "
+    "import instead, or ask the deck's author for help."
+)
 UNDO_NOTE_PLAIN = "Not what you expected? Edit → Undo %s reverses the whole update." % UNDO_LABEL
 UNDO_BUTTON_LABEL = "Undo update"
 DONE_LABEL = "Done"
@@ -653,8 +659,10 @@ def handle_apkg(
 def run_import_with_choices(mw: Any, path: str, settings: Settings) -> None:
     """Run the engine in a CollectionOp on the background thread with Anki's
     import progress. The op returns the ImportResult, whose `changes` aqt
-    uses to refresh the UI and the undo menu. Errors go to Anki's normal
-    error dialog (the engine leaves the collection as it was)."""
+    uses to refresh the UI and the undo menu. A note type move the engine
+    could not repair (`engine.MergeRepairError`, contract rule 10g) gets a
+    plain warning; every other error goes to Anki's normal error dialog, as
+    before. Either way the engine has left the collection as it was."""
     from aqt.operations import CollectionOp
 
     from . import engine
@@ -674,9 +682,30 @@ def run_import_with_choices(mw: Any, path: str, settings: Settings) -> None:
         # show the summary once that is done.
         _later(mw, lambda: show_summary(mw, result, file_name))
 
-    CollectionOp(parent=mw, op=op).success(on_success).with_backend_progress(
+    def on_failure(exc: Exception) -> None:
+        if isinstance(exc, engine.MergeRepairError):
+            show_merge_repair_warning(mw)
+            return
+        # What CollectionOp does itself when no failure handler is given.
+        import aqt.operations
+
+        aqt.operations.show_exception(parent=mw, exception=exc)
+
+    CollectionOp(parent=mw, op=op).success(on_success).failure(on_failure).with_backend_progress(
         import_progress_update
     ).run_in_background()
+
+
+def show_merge_repair_warning(mw: Any) -> None:
+    """Anki's ordinary warning box with plain text, not its exception dialog."""
+    from aqt.utils import showWarning
+
+    showWarning(
+        MERGE_REPAIR_WARNING,
+        parent=mw if isinstance(mw, QWidget) else None,
+        title=ADDON_NAME,
+        textFormat="plain",
+    )
 
 
 def _later(mw: Any, func: Callable[[], None]) -> None:

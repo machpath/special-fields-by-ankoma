@@ -49,7 +49,9 @@ Uploading replaces what's on AnkiWeb. If you studied on another device and hadn'
 
 ## Good to know
 
-- If the file uses different note types than the same notes in your collection (for example, you changed a note's type), nothing is imported and a message explains why. Use Anki's standard import for that file.
+- If an update moves notes to a different note type, the add-on follows the move and still keeps the fields you chose to keep. In the rare case it can't do that safely, nothing is imported and a message says so.
+- A cloze note can't be turned into a non-cloze note (or the reverse) by an update. Anki refuses that, and nothing is imported.
+- If you added a field of your own to a note type, Anki's standard import won't update that note type's notes. "Import with my choices" will.
 - If you keep your own Text on a cloze note and the update adds a new cloze number to it, Anki creates a card with nothing to show. Remove it with **Tools → Empty Cards**.
 - Deck option presets stored inside an `.apkg` are not imported by "Import with my choices".
 - Notes that a new release removed are not deleted from your collection.
