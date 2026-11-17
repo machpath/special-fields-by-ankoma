@@ -68,6 +68,24 @@ The verifier's scripts are in `/tmp/sfa-g/` of the session that ran them (not sa
 
 **What the fix agent found about note type moves (important):** on every supported version, Anki's forced merge for a note whose note type differs does far more than add empty "+" fields. It also appends the old type's card templates, points the target type's own templates at the empty "+" fields (cards render blank), moves every existing card of the target type onto a "+" template, creates a duplicate card per note, and shifts untouched notes' content into "+" fields. `engine._clean_merge_leftovers` repairs all of that inside the undo step (16 tests; they all fail with the clean-up disabled). Known limits: a non-clashing extra template from the old type (e.g. "Card 2") is kept; a cloze ↔ standard move still fails with Anki's own error and rolls back; in the same-name/different-id case the note type keeps Anki's "+" name. Rule 9 side effect: if the author empties an unlisted field on every note, users keep their old value.
 
+### Second verification (rules 9 and 10 only, 2026-11-16 late) and its status
+
+Verdict: safe to trial on a COPY; must not go to users until the items below are closed. Normal updates (no note type moves) passed everything again. All findings are in the note-type-move repair, identical on all 8 versions:
+
+| # | Severity | Finding | Status |
+| --- | --- | --- | --- |
+| V2-C1 | Critical | Note types made with Anki's Clone share field ids. A move between them adds no "+" fields, so the clean-up returned early while Anki had scrambled the fields of the user's OWN notes of the target type. Plain Anki with "merge note types" does the same | Fix requested: restore untouched notes regardless of leftovers; gate G1 |
+| V2-C2 | Critical | Notes arriving in one standard note type from two other types: reviewed cards deleted | Now refused by gate G2 (rule 12); making it succeed is not done |
+| V2-C3 | Critical | Old type's template has a non-clashing name: duplicate cards on every target note, cards left on the foreign template | Now refused by gates G2/G4 (rule 12); making it succeed is not done |
+| V2-H1 | High | Moves in both directions between two standard types are refused | Still refused (safe) |
+| V2-H2 | High | Standard types with identical templates under different names are refused | Still refused (safe) |
+| V2-H3 | High | If Anki's backend fails after the import, undo is gone and the user was told "unchanged" | Fix requested: rule 13 (`RollbackFailedError` + honest message pointing to the backup) |
+| V2-M1/M2 | Medium | Extra non-clashing template or empty carried-over fields left on the target type | Open (M1 now refused where it creates cards on untouched notes) |
+
+Design decision after this round: stop patching Anki's merge case by case; the engine now has to PROVE the result is clean (contract rule 12) or roll back. Moves that the repair handles correctly go through (cloze types with independent ids, one direction; standard types with clashing template names, one direction; repeat imports; move-then-move-back). Everything else is refused with a clear message.
+
+**Decision for the author:** whether to invest in making more kinds of note type move succeed (V2-C2, C3, H1, H2), or to avoid moving notes between note types in releases (adding new note types and changing fields/templates of existing ones is safe). Also: run `tools/check_shared_ids.py` on a COPY of the author's collection to see whether Ankoma's note types share ids (were cloned), which decides how much V2-C1 matters. The second verifier's scenario scripts are in `/tmp/sfa-v2/scr/` of that session (copy kept in `/tmp/sfa-pm/v2keep/`; not saved to the repository).
+
 **For the author's beta:** export v1.3 from the same collection as v1.2 so note type ids match; a mismatch no longer blocks the import but makes every note go through the move-and-clean-up path. Orchestrator's experiment script for author-side note type moves: `/tmp/sfa-pm/nt/exp.py` (session-local; result recorded in contract rule 10).
 
 ### Next steps
