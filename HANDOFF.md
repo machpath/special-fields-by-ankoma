@@ -52,7 +52,7 @@ Verdict: safe for the author to trial on a COPY of a profile; not ready for user
 | # | Severity | Finding | Status |
 | --- | --- | --- | --- |
 | C1 | Critical | Fields not listed in the settings were blanked on every updated note, including fields the user added themselves | Fix in progress: contract rule 9 (an update never blanks a field it has no content for) |
-| H1 | High | When a note's note type differs between the file and the collection, Anki's forced merge made duplicate "+" fields, hid kept values in them, and brought the author's styling even with the switch off | Fix in progress: contract rule 10 (roll back and refuse with a clear message) |
+| H1 | High | When a note's note type differs between the file and the collection, Anki's forced merge made duplicate "+" fields, hid kept values in them, and brought the author's styling even with the switch off | Fix in progress: contract rule 10 as REVISED by the author: follow the move (restore kept fields by name on the new note type, remove the empty "+" leftover fields). The author rejected "refuse the import" because future releases will move notes between note types |
 | M1 | Medium | Hand-edited config: `"keep": "false"` read as true, `"update_note_types": "false"` read as true, a single-string `protected_tags` ignored | Fixed in `config.py` (+ `tests/engine/test_config_reading.py`) |
 | M2 | Medium | Full-sync advice could lose reviews from other devices | Docs fixed; dialog texts in progress |
 | M3 | Medium | Keeping cloze Text while the update adds a cloze number leaves a blank card | Documented in the user guide |
@@ -66,11 +66,11 @@ Verdict: safe for the author to trial on a COPY of a profile; not ready for user
 
 The verifier's scripts are in `/tmp/sfa-g/` of the session that ran them (not saved). Not checked by anyone yet: a real running Anki, media handling (whether Undo removes imported media), GUI on Python 3.9.
 
-**For the author's beta:** confirm v1.3's note type ids equal v1.2's (export both from the same collection). If they differ, every note hits rule 10 and nothing imports.
+**For the author's beta:** export v1.3 from the same collection as v1.2 so note type ids match; a mismatch no longer blocks the import but makes every note go through the move-and-clean-up path. Orchestrator's experiment script for author-side note type moves: `/tmp/sfa-pm/nt/exp.py` (session-local; result recorded in contract rule 10).
 
 ### Next steps
 
-1. Review the fix agent's report; rerun `bash tools/run_matrix.sh --no-create`; confirm the C1 and H1 scenarios yourself. If `engine.py` has no `NoteTypeMismatchError`, the fixes were not saved: redo them from contract rules 9 and 10.
+1. Review the fix agent's report; rerun `bash tools/run_matrix.sh --no-create`; confirm the C1 and H1 scenarios yourself. If `engine.py` doesn't mention removing leftover "+" fields, the fixes were not saved: redo them from contract rules 9 and 10.
 2. Build the add-on file: `python3 tools/build_addon.py` (writes `dist/special_fields_by_ankoma-<version>.ankiaddon`).
 3. Manual pass in desktop Anki on a COPY of a profile (question appears for double-click, drag-and-drop and File → Import; progress bar; undo label; sync), then the author's beta with a real v1.3.
 4. Release: author reviews `docs/USER_GUIDE.md` and `docs/ANKIWEB_LISTING.md`, uploads to AnkiWeb; ankomapath.com page after the author approves its content.
@@ -83,7 +83,7 @@ Run the tests with `bash tools/run_matrix.sh` (the folder mount ignores the exec
 - Engine: the user's own settings for Anki's standard import screen are put back after each Special Fields import (Anki would otherwise overwrite them with "always update").
 - Engine: with templates-and-styling off, existing templates and CSS stay identical, but a brand-new card template added by an update is still added.
 - Settings window: the tag picker's Select button is plain (the accent is reserved for selections and Save); `open_settings(mw, parent=None)` takes an optional parent for the import flow.
-- After verification: unlisted fields the update has no content for are left alone (rule 9); a note type mismatch refuses the whole import (rule 10); the question dialog gains a one-line "sync first" tip. The author has been told about rules 9 and 10 but has not explicitly confirmed them.
+- After verification: unlisted fields the update has no content for are left alone (rule 9); note type moves are followed and Anki's leftover "+" fields are removed (rule 10, as the author asked); the question dialog gains a one-line "sync first" tip. The author asked for rule 10's current form; rule 9 has been explained to the author but not explicitly confirmed.
 - Legacy import: `ProfileManager.legacy_import_export()` is hard-coded to False on every supported version, so the old importer can't be reached from the UI; the legacy wrap is defence in depth only.
 - Re-importing the same file reports unchanged notes as skipped (reason `unchanged`); the summary dialog should leave that reason out.
 
