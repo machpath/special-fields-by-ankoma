@@ -1,0 +1,35 @@
+Anki 26.09.4, Python 3.13.18
+1) author builds v1.2
+  author: 18600 notes, 24300 cards (0.5s)
+  exported 18600 notes -> Ankoma-v1.2.apkg ['meta', 'collection.anki21b', 'collection.anki2', '0']
+2) author makes v1.3 (+ v1.3b with added field)
+  exported 18600 notes -> Ankoma-v1.3.apkg ['meta', 'collection.anki21b', 'collection.anki2', '0']
+  exported 18600 notes -> Ankoma-v1.3b-newfield.apkg ['meta', 'collection.anki21b', 'collection.anki2', '0']
+3) user imports v1.2 with stock defaults, then customises
+  user: new=18600 notes, 24300 cards
+4) BASELINE: stock dialog defaults (IF_NEWER) on v1.3
+  updated=17075 duplicate(skipped)=1525 conflicting=0
+  [PASS] IF_NEWER trap reproduced: locally-edited notes NOT updated by author (skipped=1525)
+5) OUR STRATEGY on v1.3
+  Result(found=18600, new=0, updated=18600, duplicate=0, conflicting=0, restored_notes=4100, restored_fields=3600, seconds={'snapshot': 0.059555768966674805, 'native_import': 0.4446840286254883, 'restore': 0.32058238983154297}, changes=note: true
+  [PASS] protected field kept (Personal Notes) 
+  [PASS] overwritten field updated (Text) even on locally newer notes 
+  [PASS] overwritten field updated (Extra) 
+  [PASS] IO 'Remarks' protected -> kept local (author's v1.3 change discarded) 
+  [PASS] tags merge: author root bumped to v1.3, v1.2 gone, user tag kept ['##ANKOMA-v1.3::Cardio::Topic0', 'mytag::exam']
+  [PASS] moved cards stay in user's deck 
+  [PASS] scheduling of existing cards byte-identical 
+  [PASS] no cards added/removed 
+  [PASS] revlog untouched 
+  [PASS] no schema change -> no forced full sync (same field schema) 
+  [PASS] update_notetypes=ALWAYS replaces user CSS with author CSS (expected; product decision) 
+  [PASS] single undo step labelled for us 'Import Ankoma update'
+  [PASS] undo restores pre-import state 
+6) schema change by author (added field 'Mnemonic')
+  [PASS] merge_notetypes=False: cloze notes NOT updated (conflicting), duplicate notetype created (conflicting=16000)
+  [PASS] TRAP: merge + IF_NEWER on schema change -> local notes rewritten 'now' first, so NONE of the cloze notes update (updated=2600, skipped=16000)
+  Result(found=18600, new=0, updated=18600, duplicate=0, conflicting=0, restored_notes=4100, restored_fields=3600, seconds={'snapshot': 0.055405616760253906, 'native_import': 0.4625740051269531, 'restore': 0.33653998374938965}, changes=note: true
+  [PASS] merge_notetypes=True: notes updated + protected kept + new field present 
+  [PASS] schema change -> scm bumped -> next sync is a one-way FULL sync 
+
+SUMMARY Anki 26.09.4: 18/18 checks passed

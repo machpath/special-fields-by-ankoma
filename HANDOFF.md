@@ -1,0 +1,82 @@
+# HANDOFF: how to pick this build up
+
+**To resume in a new chat:** open a chat in the "Special Fields Add on for Ankoma" project with this folder connected, and say: *"Read HANDOFF.md in my Special Fields Add On folder and continue the build."*
+
+This file is updated at every checkpoint. The copy in this folder is the source of truth between sessions; the cloud workspace a session builds in is temporary.
+
+## What this is
+
+**Special Fields by Ankoma**: an Anki add-on that lets users import an updated deck without losing the fields and tags they chose to protect. Built for the Ankoma deck, works with any deck.
+
+- Plan (decisions, build plan, tests, risks): https://claude.ai/artifact/WRPTYrPKMD8wYQ9e66bSSq
+- Mock screens: https://claude.ai/artifact/DTSAP1wSdY24Khwi5vHxCx
+- Binding spec for the code: `docs/CONTRACT.md`
+- Short decision record: project doc `claude/ankoma-special-fields-spec.md`
+- Technical investigation and prototype: `research/spike/`
+
+## How the work is organized
+
+- The chat session is the orchestrator: it owns the contract, hands out work, reviews and integrates.
+- Workers are Opus agents on medium effort (Agent tool: `model: "opus"`, `effort: "medium"`), one per workstream, each editing only the files it owns (see the table in `docs/CONTRACT.md`).
+- The author approved the plan on 2026-11-16. Nothing is uploaded or published without the author's say-so.
+
+## Status
+
+Last updated: 2026-11-16, evening (Pacific).
+
+| Phase | Status |
+| --- | --- |
+| 1. Plan approved | Done |
+| 2. Foundation (A): layout, `model.py`, `config.py`, `docs/CONTRACT.md` | Done |
+| 3. Parallel build: engine (B), settings window (C), test harness (D) | Done and saved. Gate met: the orchestrator ran `bash tools/run_matrix.sh --no-create` and saw `tests/engine` 26/26 and `tests/acceptance` 75/75 pass on 25.02.7 (Py 3.9 and 3.13), 25.07.5, 25.09.5, 26.05, 26.08.1, 26.09.4, 26.11b1, and `tests/ui` 46/46 on aqt 25.02.7 and 26.09.4 |
+| 4. Integration: import flow (E) | Done and saved: `import_flow.py` (question on every .apkg, progress, summary with undo, Tools menu item; also wraps the old `aqt.importing.importFile` route as a safety net) + `tests/flow/`. Gate met: orchestrator ran the matrix and saw engine 26/26 and acceptance 75/75 on all 8 headless versions, ui 46/46 and flow 77/60 passed on aqt 25.02.7 / 26.09.4 |
+| 5. Independent verification (G) + manual pass in desktop Anki | G agent launched (read-only on the project, works in /tmp/sfa-g); findings not received yet. Manual pass not started |
+| 6. Author beta with a real v1.3 | Not started; needs a v1.3 file from the author |
+| 7. Release (F): AnkiWeb upload by the author, ankomapath.com page | Not started |
+
+### What exists in this folder right now
+
+- `src/special_fields_by_ankoma/`: `model.py`, `config.py`, `config.json`, `config.md`, `manifest.json`, `__init__.py` (foundation); `engine.py` (B); `settings_dialog.py` (C).
+- `src/special_fields_by_ankoma/import_flow.py` (E).
+- `tests/engine/` (26 tests), `tests/ui/` (46), `tests/flow/` (78), `tests/acceptance/` (75 + 1 slow full-size test), `tools/build_fixtures.py`, `tools/run_matrix.sh`, `tools/build_addon.py`.
+- `docs/USER_GUIDE.md`, `docs/ANKIWEB_LISTING.md`: drafts for the author.
+- `docs/CONTRACT.md`: the spec each workstream builds to.
+- `research/spike/`: the investigation report and prototype.
+
+If a file named above or in the status table is missing here, that work had not been reviewed and saved when the session ended: relaunch that workstream from `docs/CONTRACT.md`.
+
+### Next steps
+
+1. Read workstream G's findings; fix anything Critical or High (send fixes to an Opus medium agent, then rerun `bash tools/run_matrix.sh --no-create`). If no findings were recorded here, relaunch G: a fresh agent reviews `src/` against `docs/CONTRACT.md` and writes its own adversarial tests outside the project tree.
+2. Build the add-on file: `python3 tools/build_addon.py` (writes `dist/special_fields_by_ankoma-<version>.ankiaddon`).
+3. Manual pass in desktop Anki on a COPY of a profile (question appears for double-click, drag-and-drop and File → Import; progress bar; undo label; sync), then the author's beta with a real v1.3.
+4. Release: author reviews `docs/USER_GUIDE.md` and `docs/ANKIWEB_LISTING.md` (support link points to the machpath repository's Issues page), uploads to AnkiWeb; ankomapath.com page after the author approves its content.
+
+GitHub: the author wants this hosted under the GitHub account `machpath`. The orchestrator created the public, empty repository https://github.com/machpath/special-fields-by-ankoma on 2026-11-16 at the author's request (through the desktop app's built-in browser, which is signed in as machpath). No code has been pushed. The support links in `docs/USER_GUIDE.md` and `docs/ANKIWEB_LISTING.md` point to its Issues page. Pushing needs this session's GitHub connection to cover the machpath account (it covered only `ankomateam` when last checked). No license file has been chosen yet; ask the author before the code goes public.
+
+Run the tests with `bash tools/run_matrix.sh` (the folder mount ignores the executable bit). Full-size import (18,600 notes, 7,400 fields and 7,440 tags restored) measured 2.3 to 2.6 s; accepted.
+
+## Decisions the orchestrator made during the build (tell the author)
+
+- Engine: imports never bring in the file's review history or deck option presets (`with_scheduling=False`, `with_deck_configs=False`); existing cards are untouched either way.
+- Engine: the user's own settings for Anki's standard import screen are put back after each Special Fields import (Anki would otherwise overwrite them with "always update").
+- Engine: with templates-and-styling off, existing templates and CSS stay identical, but a brand-new card template added by an update is still added.
+- Settings window: the tag picker's Select button is plain (the accent is reserved for selections and Save); `open_settings(mw, parent=None)` takes an optional parent for the import flow.
+- Legacy import: `ProfileManager.legacy_import_export()` is hard-coded to False on every supported version, so the old importer can't be reached from the UI; the legacy wrap is defence in depth only.
+- Re-importing the same file reports unchanged notes as skipped (reason `unchanged`); the summary dialog should leave that reason out.
+
+- Protecting a tag also protects its sub-tags: `#edited` keeps `#edited::images` too (`model.is_protected_tag`).
+- Field names are matched ignoring case and surrounding spaces.
+
+## Assumptions in force (the author can change them)
+
+Default field rows (author's list, 2026-11-16): Header, Text, Extra, Personal Notes, Textbook, Citation, with only Personal Notes kept (Images is not a default row; users can add it); the templates-and-styling switch stays, on by default; new cards on existing notes go to the deck named in the release; ankomapath.com gets a download page only; new fields are only added at the end of a note type; style-file names are versioned per release.
+
+## Still needed from the author
+
+- What makes the Unrestricted / Unrestricted+ note types different.
+- A real v1.3 export, or v1.2 plus a mocked v1.3, for the beta.
+
+## Rebuilding the test environments in a fresh workspace
+
+One environment per Anki version, headless: `uv venv /home/claude/venv-<ver> && uv pip install --python /home/claude/venv-<ver> anki==<ver> pytest` for 25.2.7 (also on Python 3.9), 25.7.5, 25.9.5, 26.5, 26.8.1, 26.9.4 and the 26.11 beta. For offscreen GUI tests: `aqt[qt]==26.9.4`, and `aqt==25.2.7` with PyQt 6.6, run with `QT_QPA_PLATFORM=offscreen`. Details in `research/spike/SPIKE_REPORT.md`, section 7.

@@ -1,0 +1,173 @@
+Anki 25.09.5, Python 3.13.18
+1) author builds v1.2
+blocked main thread for 424ms:
+  File "/home/claude/spike/poc/test_import.py", line 302, in <module>
+    sys.exit(main())
+  File "/home/claude/spike/poc/test_import.py", line 197, in main
+    a = build_author(os.path.join(work, "author.anki2"), n_cloze, n_io)
+  File "/home/claude/spike/poc/test_import.py", line 93, in build_author
+    col.add_notes(reqs)
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/collection.py", line 540, in add_notes
+    out = self._backend.add_notes(
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/_backend_generated.py", line 1449, in add_notes
+    raw_bytes = self._run_command(25, 2, message.SerializeToString())
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/_backend.py", line 167, in _run_command
+    print("".join(traceback.format_stack()))
+
+  author: 18600 notes, 24300 cards (0.6s)
+blocked main thread for 355ms:
+  File "/home/claude/spike/poc/test_import.py", line 302, in <module>
+    sys.exit(main())
+  File "/home/claude/spike/poc/test_import.py", line 199, in main
+    export(a, p12)
+  File "/home/claude/spike/poc/test_import.py", line 101, in export
+    n = col.export_anki_package(out_path=out, options=opts,
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/collection.py", line 370, in export_anki_package
+    return self._backend.export_anki_package(
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/_backend_generated.py", line 2037, in export_anki_package
+    raw_bytes = self._run_command(37, 4, message.SerializeToString())
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/_backend.py", line 167, in _run_command
+    print("".join(traceback.format_stack()))
+
+  exported 18600 notes -> Ankoma-v1.2.apkg ['meta', 'collection.anki21b', 'collection.anki2', '0']
+2) author makes v1.3 (+ v1.3b with added field)
+blocked main thread for 276ms:
+  File "/home/claude/spike/poc/test_import.py", line 302, in <module>
+    sys.exit(main())
+  File "/home/claude/spike/poc/test_import.py", line 202, in main
+    author_release_13(a)
+  File "/home/claude/spike/poc/test_import.py", line 127, in author_release_13
+    col.update_notes(notes)
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/collection.py", line 503, in update_notes
+    return self._backend.update_notes(
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/_backend_generated.py", line 1479, in update_notes
+    raw_bytes = self._run_command(25, 5, message.SerializeToString())
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/_backend.py", line 167, in _run_command
+    print("".join(traceback.format_stack()))
+
+blocked main thread for 369ms:
+  File "/home/claude/spike/poc/test_import.py", line 302, in <module>
+    sys.exit(main())
+  File "/home/claude/spike/poc/test_import.py", line 205, in main
+    export(a, p13)
+  File "/home/claude/spike/poc/test_import.py", line 101, in export
+    n = col.export_anki_package(out_path=out, options=opts,
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/collection.py", line 370, in export_anki_package
+    return self._backend.export_anki_package(
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/_backend_generated.py", line 2037, in export_anki_package
+    raw_bytes = self._run_command(37, 4, message.SerializeToString())
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/_backend.py", line 167, in _run_command
+    print("".join(traceback.format_stack()))
+
+  exported 18600 notes -> Ankoma-v1.3.apkg ['meta', 'collection.anki21b', 'collection.anki2', '0']
+blocked main thread for 313ms:
+  File "/home/claude/spike/poc/test_import.py", line 302, in <module>
+    sys.exit(main())
+  File "/home/claude/spike/poc/test_import.py", line 213, in main
+    export(a, p13b)
+  File "/home/claude/spike/poc/test_import.py", line 101, in export
+    n = col.export_anki_package(out_path=out, options=opts,
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/collection.py", line 370, in export_anki_package
+    return self._backend.export_anki_package(
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/_backend_generated.py", line 2037, in export_anki_package
+    raw_bytes = self._run_command(37, 4, message.SerializeToString())
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/_backend.py", line 167, in _run_command
+    print("".join(traceback.format_stack()))
+
+  exported 18600 notes -> Ankoma-v1.3b-newfield.apkg ['meta', 'collection.anki21b', 'collection.anki2', '0']
+3) user imports v1.2 with stock defaults, then customises
+blocked main thread for 419ms:
+  File "/home/claude/spike/poc/test_import.py", line 302, in <module>
+    sys.exit(main())
+  File "/home/claude/spike/poc/test_import.py", line 219, in main
+    r = native_default_import(u, p12)
+  File "/home/claude/spike/poc/test_import.py", line 132, in native_default_import
+    return col.import_anki_package(ImportAnkiPackageRequest(
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/collection.py", line 364, in import_anki_package
+    log = self._backend.import_anki_package_raw(request.SerializeToString())
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/_backend_generated.py", line 2013, in import_anki_package_raw
+    return self._run_command(37, 2, message)
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/_backend.py", line 167, in _run_command
+    print("".join(traceback.format_stack()))
+
+  user: new=18600 notes, 24300 cards
+4) BASELINE: stock dialog defaults (IF_NEWER) on v1.3
+blocked main thread for 323ms:
+  File "/home/claude/spike/poc/test_import.py", line 302, in <module>
+    sys.exit(main())
+  File "/home/claude/spike/poc/test_import.py", line 227, in main
+    r = native_default_import(b, p13)
+  File "/home/claude/spike/poc/test_import.py", line 132, in native_default_import
+    return col.import_anki_package(ImportAnkiPackageRequest(
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/collection.py", line 364, in import_anki_package
+    log = self._backend.import_anki_package_raw(request.SerializeToString())
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/_backend_generated.py", line 2013, in import_anki_package_raw
+    return self._run_command(37, 2, message)
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/_backend.py", line 167, in _run_command
+    print("".join(traceback.format_stack()))
+
+  updated=17075 duplicate(skipped)=1525 conflicting=0
+  [PASS] IF_NEWER trap reproduced: locally-edited notes NOT updated by author (skipped=1525)
+5) OUR STRATEGY on v1.3
+blocked main thread for 358ms:
+  File "/home/claude/spike/poc/test_import.py", line 302, in <module>
+    sys.exit(main())
+  File "/home/claude/spike/poc/test_import.py", line 240, in main
+    res = core.import_ankoma_package(c, p13, s)
+  File "/home/claude/spike/poc/ankoma_core.py", line 149, in import_ankoma_package
+    out = col.import_anki_package(req)
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/collection.py", line 364, in import_anki_package
+    log = self._backend.import_anki_package_raw(request.SerializeToString())
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/_backend_generated.py", line 2013, in import_anki_package_raw
+    return self._run_command(37, 2, message)
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/_backend.py", line 167, in _run_command
+    print("".join(traceback.format_stack()))
+
+  Result(found=18600, new=0, updated=18600, duplicate=0, conflicting=0, restored_notes=4100, restored_fields=3600, seconds={'snapshot': 0.04769253730773926, 'native_import': 0.36616992950439453, 'restore': 0.44988107681274414}, changes=note: true
+  [PASS] protected field kept (Personal Notes) 
+  [PASS] overwritten field updated (Text) even on locally newer notes 
+  [PASS] overwritten field updated (Extra) 
+  [PASS] IO 'Remarks' protected -> kept local (author's v1.3 change discarded) 
+  [PASS] tags merge: author root bumped to v1.3, v1.2 gone, user tag kept ['##ANKOMA-v1.3::Cardio::Topic0', 'mytag::exam']
+  [PASS] moved cards stay in user's deck 
+  [PASS] scheduling of existing cards byte-identical 
+  [PASS] no cards added/removed 
+  [PASS] revlog untouched 
+  [PASS] no schema change -> no forced full sync (same field schema) 
+  [PASS] update_notetypes=ALWAYS replaces user CSS with author CSS (expected; product decision) 
+  [PASS] single undo step labelled for us 'Import Ankoma update'
+  [PASS] undo restores pre-import state 
+6) schema change by author (added field 'Mnemonic')
+  [PASS] merge_notetypes=False: cloze notes NOT updated (conflicting), duplicate notetype created (conflicting=16000)
+blocked main thread for 295ms:
+  File "/home/claude/spike/poc/test_import.py", line 302, in <module>
+    sys.exit(main())
+  File "/home/claude/spike/poc/test_import.py", line 281, in main
+    r = d.import_anki_package(ImportAnkiPackageRequest(package_path=p13b, options=ImportAnkiPackageOptions(
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/collection.py", line 364, in import_anki_package
+    log = self._backend.import_anki_package_raw(request.SerializeToString())
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/_backend_generated.py", line 2013, in import_anki_package_raw
+    return self._run_command(37, 2, message)
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/_backend.py", line 167, in _run_command
+    print("".join(traceback.format_stack()))
+
+  [PASS] TRAP: merge + IF_NEWER on schema change -> local notes rewritten 'now' first, so NONE of the cloze notes update (updated=2600, skipped=16000)
+blocked main thread for 436ms:
+  File "/home/claude/spike/poc/test_import.py", line 302, in <module>
+    sys.exit(main())
+  File "/home/claude/spike/poc/test_import.py", line 288, in main
+    res = core.import_ankoma_package(e, p13b, s)
+  File "/home/claude/spike/poc/ankoma_core.py", line 149, in import_ankoma_package
+    out = col.import_anki_package(req)
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/collection.py", line 364, in import_anki_package
+    log = self._backend.import_anki_package_raw(request.SerializeToString())
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/_backend_generated.py", line 2013, in import_anki_package_raw
+    return self._run_command(37, 2, message)
+  File "/home/claude/venv-25.9.5/lib/python3.13/site-packages/anki/_backend.py", line 167, in _run_command
+    print("".join(traceback.format_stack()))
+
+  Result(found=18600, new=0, updated=18600, duplicate=0, conflicting=0, restored_notes=4100, restored_fields=3600, seconds={'snapshot': 0.04703569412231445, 'native_import': 0.4432640075683594, 'restore': 0.3218529224395752}, changes=note: true
+  [PASS] merge_notetypes=True: notes updated + protected kept + new field present 
+  [PASS] schema change -> scm bumped -> next sync is a one-way FULL sync 
+
+SUMMARY Anki 25.09.5: 18/18 checks passed
