@@ -673,8 +673,10 @@ def run_import_with_choices(mw: Any, path: str, settings: Settings) -> None:
         import_progress_update = None
 
     file_name = os.path.basename(path)
+    backup_folder = _backup_folder(mw)  # read on the main thread
 
     def op(col: Any) -> ImportResult:
+        backup_before_import(col, backup_folder)
         return engine.run_import(col, path, settings)
 
     def on_success(result: ImportResult) -> None:
@@ -694,6 +696,35 @@ def run_import_with_choices(mw: Any, path: str, settings: Settings) -> None:
     CollectionOp(parent=mw, op=op).success(on_success).failure(on_failure).with_backend_progress(
         import_progress_update
     ).run_in_background()
+
+
+def _backup_folder(mw: Any) -> Optional[str]:
+    """The profile's backup folder, or None when it can't be found."""
+    try:
+        folder = mw.pm.backupFolder()
+    except Exception:
+        return None
+    return str(folder) if folder else None
+
+
+def backup_before_import(col: Any, backup_folder: Optional[str]) -> bool:
+    """Safety net: ask Anki to write one of its normal backups before the
+    import changes anything.
+
+    Undo is the first line of defence, but Anki throws its whole undo history
+    away if one of its own operations fails part-way, so a backup is the only
+    recovery that never depends on undo. It is Anki's own backup (File ->
+    Switch Profile -> Open Backup restores it) and Anki prunes old ones as
+    usual. Best effort: a backup that can't be made never blocks the import.
+    Returns True if Anki reports a backup was created.
+    """
+    if not backup_folder:
+        return False
+    try:
+        return bool(col.create_backup(backup_folder=backup_folder, force=True, wait_for_completion=True))
+    except Exception as exc:
+        print("Special Fields by Ankoma: could not create a backup before the import: %r" % (exc,), file=sys.stderr)
+        return False
 
 
 def show_merge_repair_warning(mw: Any) -> None:

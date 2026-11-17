@@ -37,7 +37,9 @@ The question appears for every `.apkg` you open, including decks that are new to
 - **Cards you moved** to another deck stay where you put them. New notes go to the deck named in the update.
 - Every note in the file is updated, including notes you have edited. Anki's standard import skips those by default.
 
-## Undo
+## Undo and backups
+
+Before each update, the add-on asks Anki to save one of its normal backups (restore one from **File → Switch Profile → Open Backup**).
 
 The whole update is one step. **Edit → Undo Special Fields update** (or the **Undo update** button on the summary) puts everything back as it was.
 
