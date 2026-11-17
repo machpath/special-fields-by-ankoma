@@ -33,7 +33,7 @@ Built for the [Ankoma](https://ankomapath.com) pathology deck. Works with any de
 ### Optional, off by default
 
 - **Import learning progress.** Cards that are new to your collection arrive with the scheduling and review history stored in the file. Cards you already have keep your own progress.
-- **Import deck presets.** Presets in the file that you don't have yet are added and the file's decks use them. Presets you already have are never changed.
+- **Import deck options.** Deck options saved in the file (daily limits, learning steps, FSRS settings) come in as new presets and the file's decks use them. Options you already have are never changed.
 
 ### Always kept
 

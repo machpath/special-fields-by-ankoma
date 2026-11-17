@@ -211,7 +211,7 @@ def test_change_choices_opens_real_settings_then_question_again(wired, qapp):
     assert after["Card styling"] == "Keep mine"
     assert dict(log["before"])["Learning progress"] == "Not imported"
     assert after["Learning progress"] == "Imported for new cards"
-    assert after["Deck presets"] == "Not imported"
+    assert after["Deck options"] == "Not imported"
     assert after["Fields you keep"] == "Extra, Personal Notes"
     assert mw.addonManager.writes, "settings were saved through addonManager"
     assert len(engine_calls) == 1

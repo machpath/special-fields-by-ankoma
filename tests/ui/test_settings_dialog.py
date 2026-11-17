@@ -481,7 +481,7 @@ def test_import_switches_toggle_and_labels(make_dialog):
     QTest.mouseClick(dlg.scheduling_switch, Qt.MouseButton.LeftButton)
     assert dlg.result_settings().import_scheduling is False
     assert dlg.scheduling_switch.accessibleName() == SCHEDULING_HEADING == "Import learning progress"
-    assert dlg.presets_switch.accessibleName() == PRESETS_HEADING == "Import deck presets"
+    assert dlg.presets_switch.accessibleName() == PRESETS_HEADING == "Import deck options"
     # Heading and help shown as plain text, in the same kind of row as the styling switch.
     from aqt.qt import QLabel
     texts = {lab.text(): lab for lab in dlg.findChildren(QLabel)}

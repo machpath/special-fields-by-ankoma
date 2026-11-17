@@ -243,16 +243,16 @@ def test_summary_rows_other_reasons_counted_without_unchanged():
 
 
 def test_question_shows_learning_progress_and_preset_rows(question):
-    assert [r[0] for r in ROWS][-2:] == ["Learning progress", "Deck presets"]
+    assert [r[0] for r in ROWS][-2:] == ["Learning progress", "Deck options"]
     assert dict(ROWS)["Learning progress"] == "Not imported"
-    assert dict(ROWS)["Deck presets"] == "Not imported"
+    assert dict(ROWS)["Deck options"] == "Not imported"
     import dataclasses
     on = choices_summary(dataclasses.replace(default_settings(), import_scheduling=True,
                                              import_deck_presets=True))
     dlg = question(rows=on)
     labels = _texts(dlg, "choice_label")
     values = _texts(dlg, "choice_value")
-    assert labels[-2:] == ["Learning progress", "Deck presets"]
+    assert labels[-2:] == ["Learning progress", "Deck options"]
     assert values[-2:] == ["Imported for new cards", "Imported"]
     assert dlg.findChild(QLabel, "keep_note").text() == (
         "Your review history, and any cards you moved to other decks, are always kept."

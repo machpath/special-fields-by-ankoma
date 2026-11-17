@@ -13,7 +13,7 @@ It runs in Anki on a computer (Windows, Mac or Linux), Anki 25.02 or newer. Phon
 3. **Protected tags.** Start typing a tag you already use, then click it in the list, or press Enter to add the highlighted one. An update never removes a protected tag from your notes. Protecting `#edited` also protects its sub-tags, such as `#edited::images`.
 4. **Update card templates and styling.** On: an update can replace how your cards look. Off: your existing templates and styling are left as they are. A brand-new card type added by an update still arrives.
 5. **Import learning progress** (off unless you turn it on). On: cards that are new to your collection arrive with the scheduling and review history stored in the file. Cards you already have always keep your own progress. Off: new cards arrive as new.
-6. **Import deck presets** (off unless you turn it on). On: deck option presets in the file that you don't have yet are added, and the decks in the file switch to the preset the file gives them (a deck the file puts on "Default" keeps yours). Presets you already have are never changed. Off: no presets are imported and no deck changes its preset.
+6. **Import deck options** (off unless you turn it on). Deck options are the settings behind a deck's gear icon: daily limits, learning steps, FSRS settings. Anki saves each set of them as a "preset". On: presets in the file that you don't have yet are added, and the decks in the file switch to the preset the file gives them (a deck the file puts on "Default" keeps yours). Presets you already have are never changed. Off: no presets are imported and no deck changes its preset.
 7. Press **Save**. Your choices are used for every import until you change them.
 
 ## Update a deck
@@ -63,7 +63,7 @@ Uploading replaces what's on AnkiWeb. If you studied on another device and hadn'
 - A cloze note can't be turned into a non-cloze note (or the reverse) by an update. Anki refuses that, and nothing is imported.
 - If you added a field of your own to a note type, Anki's standard import won't update that note type's notes. "Import with my choices" will.
 - If you keep your own Text on a cloze note and the update adds a new cloze number to it, Anki creates a card with nothing to show. Remove it with **Tools → Empty Cards**.
-- Deck option presets stored inside an `.apkg` are imported only when **Import deck presets** is on. Undo puts your decks back on the presets they used before.
+- Deck option presets stored inside an `.apkg` are imported only when **Import deck options** is on. Undo puts your decks back on the presets they used before.
 - Notes that a new release removed are not deleted from your collection.
 - Review history stored inside an `.apkg` is imported only when **Import learning progress** is on, and only for cards that are new to your collection.
 - Settings are saved on this computer and are not synced to your other computers.

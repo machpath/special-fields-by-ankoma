@@ -156,7 +156,7 @@ def test_choices_summary_defaults():
         ("Tags", "Replaced with the update's"),
         ("Card styling", "Update"),
         ("Learning progress", "Not imported"),
-        ("Deck presets", "Not imported"),
+        ("Deck options", "Not imported"),
     ]
 
 
@@ -167,7 +167,7 @@ def test_choices_summary_custom():
         ("Tags", "Replaced with the update's"),
         ("Card styling", "Keep mine"),
         ("Learning progress", "Imported for new cards"),
-        ("Deck presets", "Not imported"),
+        ("Deck options", "Not imported"),
     ]
 
 
@@ -175,7 +175,7 @@ def test_choices_summary_deck_presets_on():
     s = Settings(fields=(), import_deck_presets=True)
     assert sd.choices_summary(s)[-2:] == [
         ("Learning progress", "Not imported"),
-        ("Deck presets", "Imported"),
+        ("Deck options", "Imported"),
     ]
 
 

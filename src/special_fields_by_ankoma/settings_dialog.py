@@ -19,7 +19,7 @@ Widgets carry objectNames so tests and other workstreams can find them:
     tag_input, tag_list, tag_hint
     styling_switch    "Update card templates and styling"
     scheduling_switch "Import learning progress"
-    presets_switch    "Import deck presets"
+    presets_switch    "Import deck options"
     restore_button, cancel_button, save_button
 """
 
@@ -69,11 +69,12 @@ SCHEDULING_HELP = (
     "review history stored in the file. Cards you already have always keep "
     "your own progress. Off: new cards arrive as new."
 )
-PRESETS_HEADING = "Import deck presets"
+# Anki calls these "deck presets"; the author found "deck options" clearer.
+PRESETS_HEADING = "Import deck options"
 PRESETS_HELP = (
-    "On: presets from the file that you don't have yet are added, and decks in "
-    "the file switch to the file's preset (unless that is Default). Presets you "
-    "already have are never changed. Off: no presets are imported."
+    "On: deck options saved in the file (daily limits, learning steps, FSRS "
+    "settings) come in as new presets, and the file's decks use them. Options "
+    "you already have are never changed. Off: no deck options are imported."
 )
 ON_TEXT = "#FFFFFF"
 
@@ -169,7 +170,7 @@ def choices_summary(settings: Settings) -> List[Tuple[str, str]]:
             "Learning progress",
             "Imported for new cards" if settings.import_scheduling else "Not imported",
         ),
-        ("Deck presets", "Imported" if settings.import_deck_presets else "Not imported"),
+        ("Deck options", "Imported" if settings.import_deck_presets else "Not imported"),
     ]
 
 
