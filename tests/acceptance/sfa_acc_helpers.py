@@ -187,7 +187,7 @@ def _short(x: Any, n: int = 400) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Expected outcome (contract rules 2-4)
+# Expected outcome (contract rules 2-4, 9 and 10)
 # ---------------------------------------------------------------------------
 
 
@@ -195,14 +195,73 @@ def norm_tags(tags: Iterable[str]) -> Set[str]:
     return {norm_tag(t) for t in tags}
 
 
-def expected_fields(before: Optional[NoteSnap], update: NoteSnap, settings: Settings) -> Dict[str, str]:
-    """Field name -> expected value for a note that is in the file."""
-    exp = {}
-    for name, val in update.fields.items():
-        if before is not None and settings.keeps_field(name) and before.has_field(name):
-            exp[name] = before.field(name)  # "Keep mine"
-        else:
-            exp[name] = val  # "Take the update's" (or field new to this note)
+def listed_field_names(settings: Settings) -> Set[str]:
+    """Normalized names of every field listed in the settings (either side)."""
+    return {norm_field(f.name) for f in settings.fields}
+
+
+def type_fields(before: Dict[str, NoteSnap], update: Dict[str, NoteSnap]) -> Dict[str, List[str]]:
+    """note type name -> the field names it must have after the import:
+    the update's fields, plus every field the user's note type already had
+    (rule 2: nothing is dropped; rule 10: no "<name>+" leftovers). Names are
+    as stored, deduplicated by normalized name, update's spelling first."""
+    out: Dict[str, List[str]] = {}
+    seen: Dict[str, Set[str]] = {}
+    for src in (update, before):
+        for n in src.values():
+            names = out.setdefault(n.notetype, [])
+            keys = seen.setdefault(n.notetype, set())
+            for name in n.fields:
+                if norm_field(name) not in keys:
+                    keys.add(norm_field(name))
+                    names.append(name)
+    return out
+
+
+def update_has_no_content(update: Dict[str, NoteSnap], imported: Iterable[str],
+                          fields_by_type: Dict[str, List[str]]) -> Set[Tuple[str, str]]:
+    """(note type, normalized field) pairs that are empty (after strip()) on
+    every note of that type the import added or updated (contract rule 9).
+    A field the update's note type does not have at all counts as empty."""
+    content: Set[Tuple[str, str]] = set()
+    types: Set[str] = set()
+    for g in imported:
+        n = update[g]
+        types.add(n.notetype)
+        for name, val in n.fields.items():
+            if val.strip():
+                content.add((n.notetype, norm_field(name)))
+    return {(t, norm_field(f)) for t in types for f in fields_by_type.get(t, [])
+            if (t, norm_field(f)) not in content}
+
+
+def expected_fields(before: Optional[NoteSnap], update: NoteSnap, settings: Settings,
+                    field_names: Optional[Iterable[str]] = None,
+                    no_content: Optional[Set[Tuple[str, str]]] = None) -> Dict[str, Tuple[str, str]]:
+    """Field name -> (expected value, rule) for a note that is in the file.
+
+    `field_names`: every field the note's note type has after the import
+    (default: the update's fields). Rules: "Keep mine" (rule 2), matched by
+    name, also for a note the update moved to another note type (rule 10a);
+    a field not listed in the settings that the update has no content for
+    on any added/updated note of the type gets the user's value back (rule
+    9); otherwise the update's value ("" for a field the update lacks)."""
+    names = list(field_names) if field_names is not None else list(update.fields)
+    listed = listed_field_names(settings)
+    no_content = no_content or set()
+    exp: Dict[str, Tuple[str, str]] = {}
+    for name in names:
+        upd_val = update.field(name)
+        upd_val = upd_val if upd_val is not None else ""
+        key = norm_field(name)
+        if before is not None and before.has_field(name):
+            if settings.keeps_field(name):
+                exp[name] = (before.field(name), "Keep mine")
+                continue
+            if key not in listed and (update.notetype, key) in no_content:
+                exp[name] = (before.field(name), "rule 9: update has no content")
+                continue
+        exp[name] = (upd_val, "Take the update's" if key in listed else "update's content")
     return exp
 
 
@@ -216,7 +275,8 @@ def expected_tags(before: Optional[NoteSnap], update: NoteSnap, settings: Settin
 def check_import_outcome(before: Dict[str, NoteSnap], update: Dict[str, NoteSnap],
                          after: Dict[str, NoteSnap], settings: Settings,
                          label: str = "") -> List[str]:
-    """Every rule about note content and tags, for every note.
+    """Every rule about note content and tags, for every note and EVERY
+    field of it (not only the fields the update has).
 
     Returns human-readable mismatch descriptions (empty = all as expected).
     """
@@ -225,6 +285,8 @@ def check_import_outcome(before: Dict[str, NoteSnap], update: Dict[str, NoteSnap
     def bad(msg: str) -> None:
         problems.append(msg)
 
+    fields_by_type = type_fields(before, update)
+    no_content = update_has_no_content(update, update.keys(), fields_by_type)
     for guid, upd in update.items():
         got = after.get(guid)
         old = before.get(guid)
@@ -232,13 +294,19 @@ def check_import_outcome(before: Dict[str, NoteSnap], update: Dict[str, NoteSnap
         if got is None:
             bad("%s note %s (%s) from the file is missing after import" % (kind, guid, upd.notetype))
             continue
-        for name, exp in expected_fields(old, upd, settings).items():
+        if got.notetype != upd.notetype:
+            bad("%s note nid=%s is of note type %r, the file has it as %r"
+                % (kind, got.nid, got.notetype, upd.notetype))
+        want_names = fields_by_type.get(upd.notetype, list(upd.fields))
+        extra = [n for n in got.fields if norm_field(n) not in {norm_field(w) for w in want_names}]
+        if extra:
+            bad("%s note nid=%s (%s) has unexpected fields %r (merge leftovers?)"
+                % (kind, got.nid, got.notetype, extra))
+        for name, (exp, rule) in expected_fields(old, upd, settings, want_names, no_content).items():
             actual = got.field(name)
             if actual is None:
                 bad("%s note nid=%s (%s): field %r missing after import" % (kind, got.nid, got.notetype, name))
             elif actual != exp:
-                rule = ("Keep mine" if (old is not None and settings.keeps_field(name)
-                                        and old.has_field(name)) else "Take the update's")
                 bad("%s note nid=%s (%s) field %r [%s]: expected %r, got %r"
                     % (kind, got.nid, got.notetype, name, rule, exp, actual))
         exp_t = expected_tags(old, upd, settings)
@@ -280,15 +348,23 @@ def fail_msg(problems: List[str], what: str) -> str:
 
 def expected_counters(before: Dict[str, NoteSnap], update: Dict[str, NoteSnap],
                       settings: Settings) -> Dict[str, int]:
+    """fields_kept counts values written back: "Keep mine" and rule 9
+    values that differ from what the update put there (its value, or "" for
+    a field it lacks)."""
     added = [g for g in update if g not in before]
     existing = [g for g in update if g in before]
+    fields_by_type = type_fields(before, update)
+    no_content = update_has_no_content(update, update.keys(), fields_by_type)
     fields_kept = notes_fk = tags_kept = notes_tk = 0
     for g in existing:
         old, upd = before[g], update[g]
         n_f = 0
-        for name, val in upd.fields.items():
-            if settings.keeps_field(name) and old.has_field(name) and old.field(name) != val:
-                n_f += 1
+        names = fields_by_type.get(upd.notetype, list(upd.fields))
+        for name, (exp, rule) in expected_fields(old, upd, settings, names, no_content).items():
+            if rule.startswith(("Keep", "rule 9")):
+                written_by_update = upd.field(name)
+                if exp != (written_by_update if written_by_update is not None else ""):
+                    n_f += 1
         upd_t = norm_tags(upd.tags)
         n_t = sum(1 for t in old.tags if settings.protects_tag(t) and norm_tag(t) not in upd_t)
         fields_kept += n_f

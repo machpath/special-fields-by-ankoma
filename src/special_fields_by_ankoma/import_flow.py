@@ -21,7 +21,8 @@ built and driven offscreen without a running Anki. Only the functions in the
 Widgets carry objectNames:
 
     QuestionDialog (special_fields_question)
-        question_heading, file_label, keep_note, choices_box, choices_title,
+        question_heading, file_label, keep_note, sync_note, choices_box,
+        choices_title,
         choice_row (property "label"), choice_label, choice_value,
         import_button, change_button, standard_button
     SummaryDialog (special_fields_summary)
@@ -46,6 +47,7 @@ from .settings_dialog import (
     _Colors,
     _css,
     _mix,
+    _plain_tooltip,
     choices_summary,
     load_settings,
     open_settings,
@@ -54,6 +56,7 @@ from .settings_dialog import (
 WINDOW_TITLE = ADDON_NAME
 QUESTION_HEADING = "Would you like to update with Special Fields by Ankoma?"
 KEEP_NOTE = "Your review history, and any cards you moved to other decks, are always kept."
+SYNC_NOTE = "If you've studied on another device, sync this computer before you update."
 CHOICES_TITLE = "Your saved choices"
 IMPORT_LABEL = "Import with my choices"
 CHANGE_LABEL = "Change choices…"
@@ -69,7 +72,8 @@ FIXED_SUMMARY_ROWS: Tuple[Tuple[str, str], ...] = (
 FULL_SYNC_NOTICE = (
     "This update changed a note type, so your next sync will be a one-way "
     "full sync. Choose “Upload to AnkiWeb” so this computer's "
-    "updated copy is kept."
+    "updated copy is kept. If you studied on another device and hadn't "
+    "synced this computer first, undo this update, sync, then import again."
 )
 UNDO_NOTE_PLAIN = "Not what you expected? Edit → Undo %s reverses the whole update." % UNDO_LABEL
 UNDO_BUTTON_LABEL = "Undo update"
@@ -222,7 +226,7 @@ def _file_label(file_name: str, parent: QWidget, c: _Colors) -> QLabel:
     _with_font(lab, -0.5)
     shown = lab.fontMetrics().elidedText(file_name, Qt.TextElideMode.ElideMiddle, _FILE_NAME_WIDTH)
     lab.setText("File: " + shown)
-    lab.setToolTip(file_name)
+    lab.setToolTip(_plain_tooltip(file_name))
     lab.setAccessibleName("File: " + file_name)
     # The (elided) name never decides the dialog's width.
     lab.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
@@ -289,6 +293,8 @@ class QuestionDialog(QDialog):
         top.addWidget(self.file_label)
         self.keep_note = _plain_label(KEEP_NOTE, self, "keep_note")
         top.addWidget(self.keep_note)
+        self.sync_note = _muted(_plain_label(SYNC_NOTE, self, "sync_note"), c)
+        top.addWidget(self.sync_note)
         lay.addLayout(top)
 
         box = QFrame(self)

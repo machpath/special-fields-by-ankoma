@@ -85,7 +85,10 @@ def test_stock_if_newer_import_skips_later_edits(fx, user_col):
     import build_fixtures
 
     log = build_fixtures.stock_import(user_col, fx.package("v1.3")).log
-    skipped = {x.id.nid for x in log.duplicate}
+    # "duplicate" = skipped as not newer. Notes of the note type the user
+    # added a field to are "conflicting" instead (schema differs, merge off):
+    # also not updated.
+    skipped = {x.id.nid for x in log.duplicate} | {x.id.nid for x in log.conflicting}
     later = set(fx.m["user"]["later_edited_nids"]) & {n.nid for g, n in fx.before.items()
                                                       if g in fx.update("v1.3")}
     assert later and later <= skipped, (

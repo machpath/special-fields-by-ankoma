@@ -60,4 +60,11 @@ def test_check06_false_keeps_templates_and_css_byte_identical(fx, user_col, run_
         wrong = [(after[g].nid, after[g].field(f)) for g in with_data if after[g].field(f) != upd[g].field(f)]
         assert not wrong, "new field %r should receive the update's data; %d notes wrong, e.g. %s" % (
             f, len(wrong), wrong[:5])
-    assert res is not None
+    # the switch changes styling only: which notes were updated, added and
+    # how many values were put back is exactly as with the switch on
+    exp = H.expected_counters(fx.before, fx.update(key), s)
+    got = {k: getattr(res, k) for k in exp}
+    assert got == exp, "%s with update_note_types=False, counters {name: (expected, got)}: %s" % (
+        key, {k: (exp[k], got[k]) for k in exp if exp[k] != got[k]})
+    assert res.note_types_changed is (key == "v1.3-newfield"), (
+        "%s: note_types_changed should be %s" % (key, key == "v1.3-newfield"))

@@ -26,7 +26,7 @@ def _scm(col):
 # ---- check 11 ----------------------------------------------------------------
 
 @pytest.mark.parametrize("case", sorted(CASES))
-@pytest.mark.parametrize("key", ["v1.3", "v1.3-newfield", "pharm-v2", "brandnew"])
+@pytest.mark.parametrize("key", ["v1.3", "v1.3-newfield", "v1.3-moved", "pharm-v2", "brandnew"])
 def test_check11_counters(fx, user_col, run_import, key, case):
     s = CASES[case]
     scm0 = _scm(user_col)

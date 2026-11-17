@@ -42,9 +42,12 @@ def test_check04_protected_tag_and_subtags_stay_rest_updates(fx, user_col, run_i
             "nid=%s: unprotected personal tags should be gone: %s" % (old.nid, got.tags))
         assert not any(t.startswith("##ANKOMA-v1.2") for t in got.tags), (
             "nid=%s: the rest of the tags should update (v1.2 tags left): %s" % (old.nid, got.tags))
-        pn = got.field("Personal Notes")
-        assert pn is None or not pn.startswith("MY NOTE"), (
-            "nid=%s: no fields kept, so Personal Notes should take the update's" % old.nid)
+        # No field is listed, and the update has no content for Personal Notes
+        # on any note (the author leaves it empty): rule 9 puts the user's back.
+        assert got.field("Personal Notes") == old.field("Personal Notes"), (
+            "nid=%s: Personal Notes is unlisted and empty in the whole update, so the "
+            "user's value should be put back (rule 9); got %r"
+            % (old.nid, got.field("Personal Notes")))
     lookalike = [n for n in fx.before.values() if any(norm_tag(t) == "#edited2" for t in n.tags)]
     assert lookalike
     for old in lookalike:

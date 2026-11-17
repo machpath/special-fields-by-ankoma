@@ -30,7 +30,7 @@ Last updated: 2026-11-16, evening (Pacific).
 | 2. Foundation (A): layout, `model.py`, `config.py`, `docs/CONTRACT.md` | Done |
 | 3. Parallel build: engine (B), settings window (C), test harness (D) | Done and saved. Gate met: the orchestrator ran `bash tools/run_matrix.sh --no-create` and saw `tests/engine` 26/26 and `tests/acceptance` 75/75 pass on 25.02.7 (Py 3.9 and 3.13), 25.07.5, 25.09.5, 26.05, 26.08.1, 26.09.4, 26.11b1, and `tests/ui` 46/46 on aqt 25.02.7 and 26.09.4 |
 | 4. Integration: import flow (E) | Done and saved: `import_flow.py` (question on every .apkg, progress, summary with undo, Tools menu item; also wraps the old `aqt.importing.importFile` route as a safety net) + `tests/flow/`. Gate met: orchestrator ran the matrix and saw engine 26/26 and acceptance 75/75 on all 8 headless versions, ui 46/46 and flow 77/60 passed on aqt 25.02.7 / 26.09.4 |
-| 5. Independent verification (G) + manual pass in desktop Anki | G reported (findings below). Fix agent launched for the engine, import flow, settings labels and tests; its work is NOT yet reviewed, saved or pushed. Orchestrator already fixed `config.py` (hand-edited settings) and the docs. Manual pass not started |
+| 5. Independent verification (G) + manual pass in desktop Anki | G reported; Critical/High findings fixed (rules 9 and 10) and pushed. Orchestrator re-ran the matrix after the fixes: engine 54/54 and acceptance 87/87 on all 8 headless versions, ui 47/47, flow 79 (aqt 25.02.7) and 62 (aqt 26.09.4); the verifier's own 74 checks now fail only on two accepted edge cases (equal timestamps; blank cloze card when Text is kept). Still to do: unrepairable-merge fallback (see next steps), a focused re-verification of the rule 9/10 code, manual pass in real Anki |
 | 6. Author beta with a real v1.3 | Not started; needs a v1.3 file from the author |
 | 7. Release (F): AnkiWeb upload by the author, ankomapath.com page | Not started |
 
@@ -51,20 +51,22 @@ Verdict: safe for the author to trial on a COPY of a profile; not ready for user
 
 | # | Severity | Finding | Status |
 | --- | --- | --- | --- |
-| C1 | Critical | Fields not listed in the settings were blanked on every updated note, including fields the user added themselves | Fix in progress: contract rule 9 (an update never blanks a field it has no content for) |
-| H1 | High | When a note's note type differs between the file and the collection, Anki's forced merge made duplicate "+" fields, hid kept values in them, and brought the author's styling even with the switch off | Fix in progress: contract rule 10 as REVISED by the author: follow the move (restore kept fields by name on the new note type, remove the empty "+" leftover fields). The author rejected "refuse the import" because future releases will move notes between note types |
+| C1 | Critical | Fields not listed in the settings were blanked on every updated note, including fields the user added themselves | Fixed: contract rule 9 (an update never blanks a field it has no content for) |
+| H1 | High | When a note's note type differs between the file and the collection, Anki's forced merge made duplicate "+" fields, hid kept values in them, and brought the author's styling even with the switch off | Fixed: contract rule 10 as REVISED by the author: follow the move (restore kept fields by name on the new note type, remove the empty "+" leftover fields). The author rejected "refuse the import" because future releases will move notes between note types |
 | M1 | Medium | Hand-edited config: `"keep": "false"` read as true, `"update_note_types": "false"` read as true, a single-string `protected_tags` ignored | Fixed in `config.py` (+ `tests/engine/test_config_reading.py`) |
-| M2 | Medium | Full-sync advice could lose reviews from other devices | Docs fixed; dialog texts in progress |
+| M2 | Medium | Full-sync advice could lose reviews from other devices | Fixed in docs and dialogs |
 | M3 | Medium | Keeping cloze Text while the update adds a cloze number leaves a blank card | Documented in the user guide |
 | M4 | Medium | User guide overclaimed the styling switch | Reworded |
-| L1 | Low | Markup in field/tag names rendered as rich text in Settings | Fix in progress |
+| L1 | Low | Markup in field/tag names rendered as rich text in Settings | Fixed |
 | L2 | Low | The question also appears for `.zip` files (Anki's importer accepts them) | Accepted, not documented |
 | L3 | Low | Small wording differences from the mocks (summary heading "Update complete") | Accepted |
 | L4 | Low | A note whose local and author edit share the same second is skipped as unchanged | Accepted (Anki behaviour) |
-| L5 | Low | Acceptance oracle ignored fields absent from the update; two assertions could not fail | Fix in progress |
+| L5 | Low | Acceptance oracle ignored fields absent from the update; two assertions could not fail | Fixed |
 | L6 | Low | Deck option presets in a file are not imported | Documented |
 
 The verifier's scripts are in `/tmp/sfa-g/` of the session that ran them (not saved). Not checked by anyone yet: a real running Anki, media handling (whether Undo removes imported media), GUI on Python 3.9.
+
+**What the fix agent found about note type moves (important):** on every supported version, Anki's forced merge for a note whose note type differs does far more than add empty "+" fields. It also appends the old type's card templates, points the target type's own templates at the empty "+" fields (cards render blank), moves every existing card of the target type onto a "+" template, creates a duplicate card per note, and shifts untouched notes' content into "+" fields. `engine._clean_merge_leftovers` repairs all of that inside the undo step (16 tests; they all fail with the clean-up disabled). Known limits: a non-clashing extra template from the old type (e.g. "Card 2") is kept; a cloze ↔ standard move still fails with Anki's own error and rolls back; in the same-name/different-id case the note type keeps Anki's "+" name. Rule 9 side effect: if the author empties an unlisted field on every note, users keep their old value.
 
 **For the author's beta:** export v1.3 from the same collection as v1.2 so note type ids match; a mismatch no longer blocks the import but makes every note go through the move-and-clean-up path. Orchestrator's experiment script for author-side note type moves: `/tmp/sfa-pm/nt/exp.py` (session-local; result recorded in contract rule 10).
 

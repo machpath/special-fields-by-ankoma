@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from PyQt6.QtTest import QTest
 
-from aqt.qt import QDialog, QLabel, QPushButton, QWidget, Qt
+from aqt.qt import QDialog, QLabel, QPushButton, QTextDocument, QWidget, Qt
 
 from special_fields_by_ankoma import import_flow as flow
 from special_fields_by_ankoma.config import default_settings
@@ -17,6 +17,15 @@ ROWS = choices_summary(default_settings())
 
 def _texts(widget: QWidget, name: str):
     return [w.text() for w in widget.findChildren(QLabel, name)]
+
+
+def _shown_tooltip(text: str) -> str:
+    """What Qt displays for a tooltip: rich text if Qt guesses so, else plain."""
+    if Qt.mightBeRichText(text):
+        doc = QTextDocument()
+        doc.setHtml(text)
+        return doc.toPlainText()
+    return text
 
 
 def _tab_chain(dlg: QDialog):
@@ -77,6 +86,9 @@ def test_question_texts(question):
     assert dlg.findChild(QLabel, "file_label").text() == "File: updated 2026.apkg"
     assert dlg.findChild(QLabel, "keep_note").text() == (
         "Your review history, and any cards you moved to other decks, are always kept."
+    )
+    assert dlg.findChild(QLabel, "sync_note").text() == (
+        "If you've studied on another device, sync this computer before you update."
     )
     assert dlg.findChild(QLabel, "choices_title").text() == "Your saved choices"
     assert dlg.rows() == ROWS
@@ -163,7 +175,7 @@ def test_question_tab_chain(question):
 def test_question_object_and_accessible_names(question):
     dlg = question()
     assert dlg.objectName() == "special_fields_question"
-    for name in ("question_heading", "file_label", "keep_note", "choices_title"):
+    for name in ("question_heading", "file_label", "keep_note", "sync_note", "choices_title"):
         assert dlg.findChild(QLabel, name) is not None, name
     for name in ("import_button", "change_button", "standard_button"):
         b = dlg.findChild(QPushButton, name)
@@ -187,7 +199,8 @@ def test_question_shows_any_file_name(question, name):
     dlg = question(file_name=name)
     lab = dlg.findChild(QLabel, "file_label")
     assert lab.textFormat() == Qt.TextFormat.PlainText
-    assert lab.toolTip() == name
+    # Tooltips are escaped rich text, so markup in a file name shows literally.
+    assert _shown_tooltip(lab.toolTip()) == name
     assert lab.accessibleName() == "File: " + name
     if len(name) < 60:
         assert lab.text() == "File: " + name
@@ -273,9 +286,51 @@ def test_summary_dialog_full_sync_notice(summary):
     assert box is not None and box.isVisible()
     assert dlg.findChild(QLabel, "full_sync_text").text() == (
         "This update changed a note type, so your next sync will be a one-way full "
-        "sync. Choose “Upload to AnkiWeb” so this computer's updated copy is kept."
+        "sync. Choose “Upload to AnkiWeb” so this computer's updated copy is kept. "
+        "If you studied on another device and hadn't synced this computer first, "
+        "undo this update, sync, then import again."
     )
+    assert dlg.findChild(QLabel, "full_sync_text").textFormat() == Qt.TextFormat.PlainText
     assert box.accessibleName()
+
+
+def test_question_sync_note_is_muted_and_directly_under_keep_note(question):
+    dlg = question()
+    keep = dlg.findChild(QLabel, "keep_note")
+    sync = dlg.findChild(QLabel, "sync_note")
+    assert sync.isVisible() and sync.textFormat() == Qt.TextFormat.PlainText
+    lay = keep.parentWidget().layout()
+    # both sit in the same top block, sync_note right after keep_note
+    top = None
+    for i in range(lay.count()):
+        item = lay.itemAt(i)
+        sub = item.layout()
+        if sub is not None and sub.indexOf(keep) >= 0:
+            top = sub
+    assert top is not None
+    assert top.indexOf(sync) == top.indexOf(keep) + 1
+    assert sync.geometry().top() > keep.geometry().top()
+    # muted: same colour rule as the other muted texts, not the plain keep_note
+    assert "color:" in sync.styleSheet() and "color:" not in keep.styleSheet()
+    assert sync.styleSheet() == dlg.findChild(QLabel, "file_label").styleSheet()
+
+
+def test_every_dialog_label_is_plain_text_except_the_undo_note(question, summary):
+    """Nothing user-supplied (file names, skip reasons, saved choices) can be
+    rendered as markup; only the fixed undo hint uses rich text."""
+    rows = [("Fields you keep", "<b>Personal</b> Notes"), ("Protected tags", "<i>#edited</i>")]
+    q = question(file_name="<b>x</b>.apkg", rows=rows)
+    for lab in q.findChildren(QLabel):
+        if lab.pixmap() is None or lab.pixmap().isNull():
+            assert lab.textFormat() == Qt.TextFormat.PlainText, lab.objectName()
+    assert _texts(q, "choice_value") == ["<b>Personal</b> Notes", "<i>#edited</i>"]
+    s = summary(_result(note_types_changed=True, notes_skipped=1,
+                        skip_reasons={"<b>odd</b>": 1}), file_name="<b>x</b>.apkg")
+    for lab in s.findChildren(QLabel):
+        if lab.objectName() in ("undo_note", "full_sync_icon"):
+            continue
+        assert lab.textFormat() == Qt.TextFormat.PlainText, lab.objectName()
+    assert s.findChild(QLabel, "skip_details").text() == "<b>odd</b>: 1"
 
 
 def test_summary_undo_and_done(summary):

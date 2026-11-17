@@ -506,3 +506,54 @@ def test_field_rows_are_findable_by_object_name(make_dialog):
     assert [r.property("field_name") for r in rows] == [n for n, _ in DEFAULT_FIELDS]
     assert dlg.findChild(QWidget, "tag_input") is dlg.tag_input
     assert dlg.findChild(QWidget, "styling_switch") is dlg.styling_switch
+
+
+# --------------------------------------------------------------------------
+# Markup in names is shown literally (field names and tags are user data)
+
+
+def _shown_tooltip(text):
+    from aqt.qt import QTextDocument
+
+    if Qt.mightBeRichText(text):
+        doc = QTextDocument()
+        doc.setHtml(text)
+        return doc.toPlainText()
+    return text
+
+
+def test_markup_in_field_name_and_tag_is_shown_literally(make_dialog):
+    from aqt.qt import QLabel
+
+    field = "<b>x</b> & <i>notes</i>"
+    tag = "<b>tag</b>::<u>sub</u>"
+    settings = Settings(fields=default_settings().fields + (FieldChoice(field, True),),
+                        protected_tags=(tag,), update_note_types=True)
+    dlg = make_dialog(settings=settings, fields=["Text", field, "<s>other</s>"], tags=[tag, "<s>t</s>"])
+    row = dlg.row_for(field)
+    assert row is not None
+    assert row.label.textFormat() == Qt.TextFormat.PlainText
+    assert row.label.text() == field
+    assert _shown_tooltip(row.label.toolTip()) == field
+    chip = dlg.tag_chips()[0]
+    chip_label = chip.findChild(QLabel, "tag_chip_label")
+    assert chip_label.textFormat() == Qt.TextFormat.PlainText
+    assert chip_label.text() == tag
+    assert _shown_tooltip(chip_label.toolTip()) == tag
+    # hint lines that echo what the user typed
+    type_into(dlg.tag_input, "<b>nope</b>")
+    assert dlg.tag_hint.textFormat() == Qt.TextFormat.PlainText
+    assert "<b>nope</b>" in dlg.tag_hint.text()
+    dlg.open_field_picker()
+    type_into(dlg.field_search, "<s>other</s>")
+    dlg._field_enter()
+    assert dlg.field_hint.textFormat() == Qt.TextFormat.PlainText
+    assert dlg.row_for("<s>other</s>").label.text() == "<s>other</s>"
+    assert "<s>other</s>" in dlg.field_hint.text()
+    # nothing in the window is rich text
+    for lab in dlg.findChildren(QLabel):
+        assert lab.textFormat() == Qt.TextFormat.PlainText, (lab.objectName(), lab.text())
+    # the result keeps the names exactly
+    dlg.accept()
+    out = dlg.result_settings()
+    assert FieldChoice(field, True) in out.fields and tag in out.protected_tags

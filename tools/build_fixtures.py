@@ -20,6 +20,10 @@ What gets built (see `describe()` / the report for details):
                                        some existing notes
   packages/Ankoma-v1.3-newfield.apkg   v1.3 plus "Board Pearls" appended to
                                        Cloze-Ankoma-AP (filled, used in a template)
+  packages/Ankoma-v1.3-moved.apkg      v1.3 with some notes moved by the author to
+                                       another existing note type (AP -> AP-
+                                       Unrestricted, IOE -> IOE+, whose fields are
+                                       in another order)
   packages/Pharm-v1.apkg / -v2.apkg    another author's deck whose note type
                                        has a field ("My Mnemonic") no Ankoma
                                        note type has
@@ -45,7 +49,7 @@ import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FIXTURE_FORMAT = 3  # bump when the fixture layout or content changes
+FIXTURE_FORMAT = 4  # bump when the fixture layout or content changes
 
 # ---------------------------------------------------------------------------
 # Ankoma's note types (exact names and field lists from docs/CONTRACT.md)
@@ -99,6 +103,18 @@ TAG_REORG = {
 
 NEWFIELD_NOTETYPE = "Cloze-Ankoma-AP"
 NEWFIELD_NAME = "Board Pearls"
+
+# A field the simulated user added to one Ankoma note type themselves (not in
+# any release), filled in on some notes (contract rule 9).
+USER_FIELD_NOTETYPE = "Cloze-Ankoma-CP"
+USER_FIELD_NAME = "My Mnemonic (mine)"
+
+# Notes the author moves to another note type in v1.3-moved (rule 10):
+# (from, to); every note of `from` whose position i has i % 9 == 4.
+MOVES = (
+    ("Cloze-Ankoma-AP", "Cloze-Ankoma-AP-Unrestricted"),
+    ("Image Occlusion Enhanced", "Image Occlusion Enhanced+"),
+)
 
 PHARM_NOTETYPE = "Pharm-Basic"
 PHARM_FIELDS = ["Front", "Back", "My Mnemonic"]
@@ -410,6 +426,37 @@ def author_add_field(col) -> None:
     col.update_notes(notes)
 
 
+def author_move_notes(col) -> List[Dict[str, Any]]:
+    """Move some notes to another (existing) note type, the way an author
+    would in Anki ("Change Note Type", fields matched by name)."""
+    moved: List[Dict[str, Any]] = []
+    mm = col.models
+    for src, dst in MOVES:
+        old = mm.by_name(src)
+        new = mm.by_name(dst)
+        nids = [nid for i, nid in enumerate(sorted(col.find_notes('"note:%s"' % src))) if i % 9 == 4]
+        if not nids:
+            continue
+        info = mm.change_notetype_info(old_notetype_id=old["id"], new_notetype_id=new["id"])
+        req = info.input
+        old_names = [f["name"] for f in old["flds"]]
+        del req.new_fields[:]
+        req.new_fields.extend(old_names.index(f["name"]) if f["name"] in old_names else -1
+                              for f in new["flds"])
+        req.note_ids.extend(nids)
+        mm.change_notetype_of_notes(req)
+        for nid in nids:
+            moved.append({"guid": col.get_note(nid).guid, "from": src, "to": dst})
+    # the author edits the moved notes too
+    notes = []
+    for m in moved:
+        n = col.get_note(col.db.scalar("select id from notes where guid=?", m["guid"]))
+        n.fields[0] = n.fields[0] + " (moved)"
+        notes.append(n)
+    col.update_notes(notes)
+    return moved
+
+
 def build_simple_deck(col, nt_name: str, fields: Sequence[str], deck: str, n: int,
                       version: str, values=None) -> None:
     from anki.collection import AddNoteRequest
@@ -521,6 +568,22 @@ def simulate_user(col, n_reviews: int, n_resched: int) -> Dict[str, Any]:
             notes.append(n)
             pharm_edited.append(nid)
     col.update_notes(notes)
+
+    # a field of the user's own on one Ankoma note type, filled on the notes
+    # that already have other edits (roles 0-2)
+    mm = col.models
+    nt = mm.by_name(USER_FIELD_NOTETYPE)
+    mm.add_field(nt, mm.new_field(USER_FIELD_NAME))
+    mm.update_dict(nt)
+    user_field_nids = []
+    notes = []
+    for i, nid in enumerate(sorted(col.find_notes('"note:%s"' % USER_FIELD_NOTETYPE))):
+        if i % 10 in (0, 1, 2):
+            n = col.get_note(nid)
+            n[USER_FIELD_NAME] = "MY OWN MNEMONIC %d" % i
+            notes.append(n)
+            user_field_nids.append(nid)
+    col.update_notes(notes)
     _bump_mod(col, edited + pharm_edited, 3600)
 
     # move cards: whole notes to "My Deck"; second card of 2-card notes to a sub-deck
@@ -574,6 +637,7 @@ def simulate_user(col, n_reviews: int, n_resched: int) -> Dict[str, Any]:
 
     return {
         "roles": roles,
+        "user_field_nids": user_field_nids,
         "later_edited_nids": sorted(edited + pharm_edited),
         "pharm_edited_nids": pharm_edited,
         "moved_card_ids": sorted(moved),
@@ -618,6 +682,7 @@ def build(out_dir: str, size: str = "small", verbose: bool = True) -> Dict[str, 
         "v1.2": os.path.join(pk, "Ankoma-v1.2.apkg"),
         "v1.3": os.path.join(pk, "Ankoma-v1.3.apkg"),
         "v1.3-newfield": os.path.join(pk, "Ankoma-v1.3-newfield.apkg"),
+        "v1.3-moved": os.path.join(pk, "Ankoma-v1.3-moved.apkg"),
         "pharm-v1": os.path.join(pk, "Pharm-v1.apkg"),
         "pharm-v2": os.path.join(pk, "Pharm-v2.apkg"),
         "brandnew": os.path.join(pk, "BrandNew.apkg"),
@@ -634,6 +699,15 @@ def build(out_dir: str, size: str = "small", verbose: bool = True) -> Dict[str, 
     v13 = author_release_v13(a, counts)
     exported["v1.3"] = export_deck(a, ROOT_DECK, pkgs["v1.3"])
     log("  v1.3: %d notes, %d cards" % (a.note_count(), a.card_count()))
+    a.close()
+    shutil.copy(os.path.join(work, "author.anki2"), os.path.join(work, "author-moved.anki2"))
+    shutil.copytree(os.path.join(work, "author.media"), os.path.join(work, "author-moved.media"))
+    mv = Collection(os.path.join(work, "author-moved.anki2"))
+    time.sleep(1.1)
+    v13["moved_notes"] = author_move_notes(mv)
+    exported["v1.3-moved"] = export_deck(mv, ROOT_DECK, pkgs["v1.3-moved"])
+    mv.close()
+    a = Collection(os.path.join(work, "author.anki2"))
     time.sleep(1.1)
     author_add_field(a)
     exported["v1.3-newfield"] = export_deck(a, ROOT_DECK, pkgs["v1.3-newfield"])
@@ -702,6 +776,7 @@ def build(out_dir: str, size: str = "small", verbose: bool = True) -> Dict[str, 
         "constants": {
             "root_deck": ROOT_DECK, "new_subdeck": NEW_SUBDECK,
             "newfield_notetype": NEWFIELD_NOTETYPE, "newfield_name": NEWFIELD_NAME,
+            "user_field_notetype": USER_FIELD_NOTETYPE, "user_field_name": USER_FIELD_NAME,
             "pharm_notetype": PHARM_NOTETYPE, "pharm_deck": PHARM_DECK,
             "brandnew_notetype": BRANDNEW_NOTETYPE, "brandnew_deck": BRANDNEW_DECK,
             "tag_reorg": TAG_REORG,

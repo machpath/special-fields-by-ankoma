@@ -39,7 +39,7 @@ def test_check09_scheduling_and_revlog_identical(fx, user_col, run_import, key, 
 
 # ---- check 10 ----------------------------------------------------------------
 
-@pytest.mark.parametrize("key", ["v1.3", "v1.3-newfield", "brandnew"])
+@pytest.mark.parametrize("key", ["v1.3", "v1.3-newfield", "v1.3-moved", "brandnew"])
 def test_check10_one_undo_step_restores_exactly(fx, user_col, run_import, key):
     assert user_col.undo_status().undo == "", "precondition: freshly opened collection has no undo history"
     state0 = H.db_state(user_col)

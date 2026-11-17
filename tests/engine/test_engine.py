@@ -110,8 +110,10 @@ def test_kept_field_followed_across_rename_by_field_id(user_col, world):
 
 
 def test_protected_tags_kept_other_tags_replaced(user_col, world):
-    """No fields kept, "#edited" protected: every #edited (and sub-tag) stays,
-    every other tag is replaced by the update's, fields take the update."""
+    """No fields listed, "#edited" protected: every #edited (and sub-tag)
+    stays, every other tag is replaced by the update's, fields take the
+    update's content. (Rule 9: Personal Notes is not listed and the update
+    has no content for it on any note, so the user's values come back.)"""
     col = user_col
     res = run_import(col, world["paths"]["v2"], S(protected=("#edited",)))
     a1, a3, b1, a2 = g(col, "A1"), g(col, "A3"), g(col, "B1"), g(col, "A2")
@@ -123,11 +125,12 @@ def test_protected_tags_kept_other_tags_replaced(user_col, world):
     assert len([t for t in a3.tags if t.lower() == "#edited"]) == 1
     assert sorted(b1.tags) == sorted(["##REL-v2::b", "#Edited::sub"])
     assert a2.tags == ["##REL-v2::a::t2"]
-    # fields took the update
-    assert a1["Personal Notes"] == "" and a1["Header"] == "H1 v2" and b1["Text"] == "B1 v2"
+    # fields took the update's content; the field it has none for is put back
+    assert a1["Header"] == "H1 v2" and b1["Text"] == "B1 v2"
+    assert a1["Personal Notes"] == "mine A1" and b1["Personal Notes"] == "mine B1"
     assert res.protected_tags_kept == 3  # A1: 2, B1: 1
     assert res.notes_with_tags_kept == 2
-    assert res.fields_kept == 0
+    assert res.fields_kept == 2 and res.notes_with_fields_kept == 2  # rule 9: A1, B1
 
 
 def test_protecting_a_sub_tag_only(user_col, world):
@@ -270,26 +273,34 @@ def test_brand_new_deck_into_empty_collection(empty_col, world):
 
 
 def test_nothing_to_restore_still_forces_import(user_col, world, monkeypatch):
+    """Nothing kept, nothing protected, and the update has content for every
+    field it does not list (Header, Extra): nothing is written back, but the
+    forced import still runs. (Rules 9 and 10 need the snapshot whatever the
+    settings, so the restore pass always runs; it just writes nothing.)"""
     col = user_col
     settings = S(take=("Personal Notes", "Text"), protected=("  ",))
-    assert engine._snapshot_notes(col, settings) == {}
-    called = []
-    monkeypatch.setattr(engine, "_restore_notes", lambda *a, **k: called.append(1))
+    saved = []
+    real_update = col.update_notes
+    monkeypatch.setattr(col, "update_notes", lambda notes: saved.append(list(notes)) or real_update(notes))
     res = run_import(col, world["paths"]["v2"], settings)
-    assert called == []
+    assert saved == []
     assert res.notes_updated == 6 and res.fields_kept == 0 and res.protected_tags_kept == 0
     assert g(col, "A1")["Personal Notes"] == "" and g(col, "B1")["Extra"] == "E1 v2"
 
 
-def test_snapshot_only_what_settings_need(user_col):
+def test_snapshot_holds_every_note_as_stored(user_col):
+    """Rules 9 and 10 need every field value and note type of every note,
+    whatever the settings: the snapshot is one pass over the notes table
+    (contract: "the snapshot must now hold every field value of every
+    existing note"), plus note type field/template ids and card ids."""
     col = user_col
-    snap = engine._snapshot_notes(col, S(keep=("Header",)))
-    # only note type A has Header; tags not collected
-    assert {g(col, x).id for x in ("A1", "A2", "A3", "A4")} == set(snap)
-    assert all(s.tags == [] for s in snap.values())
-    snap = engine._snapshot_notes(col, S(protected=("#edited",)))
-    assert set(snap) == {g(col, x).id for x in ("A1", "A3", "B1")}
-    assert all(s.fields == [] for s in snap.values())
+    snap = engine._snapshot(col)
+    rows = col.db.all("select id, mid, flds, tags from notes")
+    assert snap.notes == {nid: (mid, flds, tags) for nid, mid, flds, tags in rows}
+    assert snap.card_ids == set(col.db.list("select id from cards"))
+    nt = col.models.by_name(NT_A)
+    assert [n for _fid, n in snap.fields[nt["id"]]] == ["header", "text", "extra", "personal notes"]
+    assert snap.templates[nt["id"]] == {t["id"] for t in nt["tmpls"]}
 
 
 # --- undo ----------------------------------------------------------------------------------
@@ -316,7 +327,10 @@ def test_one_undo_step_restores_everything(user_col, world):
 def test_changes_is_opchanges(user_col, world):
     res = run_import(user_col, world["paths"]["v2"], S(keep=("Personal Notes",)))
     assert isinstance(res.changes, OpChanges)
-    assert res.changes.note and res.changes.card is not None
+    # the import changed notes and added cards (A5 is new), and aqt refreshes
+    # the browser and the study screen from these flags
+    assert res.changes.note is True and res.changes.card is True
+    assert res.changes.browser_table is True
 
 
 # --- counters ------------------------------------------------------------------------------

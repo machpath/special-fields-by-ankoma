@@ -158,6 +158,21 @@ def choices_summary(settings: Settings) -> List[Tuple[str, str]]:
 # Colours (taken from the palette so light and dark themes both work)
 
 
+def _plain_tooltip(text: str) -> str:
+    """A tooltip that shows `text` literally. Qt guesses whether tooltip text
+    is rich text, so user-supplied names are escaped inside a rich-text
+    wrapper (a field named "<b>x</b>" must not turn bold)."""
+    escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return "<span>%s</span>" % escaped
+
+
+def _plain(lab: QLabel) -> QLabel:
+    """Labels show their text literally, never as rich text: field names,
+    tags and hints that echo typed text may contain markup."""
+    lab.setTextFormat(Qt.TextFormat.PlainText)
+    return lab
+
+
 def _mix(a: QColor, b: QColor, t: float) -> QColor:
     """`a` moved a fraction `t` of the way towards `b`."""
     return QColor(
@@ -409,10 +424,10 @@ class FieldRow(QWidget):
         lay = QHBoxLayout(self)
         lay.setContentsMargins(12, 6, 10, 6)
         lay.setSpacing(6)
-        self.label = QLabel(self)
+        self.label = _plain(QLabel(self))
         self.label.setObjectName("field_name_label")
         self.label.setText(self.label.fontMetrics().elidedText(name, Qt.TextElideMode.ElideMiddle, 230))
-        self.label.setToolTip(name)
+        self.label.setToolTip(_plain_tooltip(name))
         lay.addWidget(self.label, 0)
         self.remove_button: Optional[QToolButton] = None
         if removable:
@@ -446,11 +461,11 @@ class TagChip(QFrame):
         lay = QHBoxLayout(self)
         lay.setContentsMargins(10, 2, 3, 2)
         lay.setSpacing(2)
-        label = QLabel(self)
+        label = _plain(QLabel(self))
         label.setObjectName("tag_chip_label")
         fm = label.fontMetrics()
         label.setText(fm.elidedText(tag, Qt.TextElideMode.ElideMiddle, 360))
-        label.setToolTip(tag)
+        label.setToolTip(_plain_tooltip(tag))
         lay.addWidget(label)
         rb = QToolButton(self)
         rb.setObjectName("remove_tag_button")
@@ -498,7 +513,8 @@ class SettingsDialog(QDialog):
     # ----- construction -----------------------------------------------------
 
     def _muted_label(self, text: str, name: str = "") -> QLabel:
-        lab = QLabel(text, self)
+        lab = _plain(QLabel(self))
+        lab.setText(text)
         lab.setWordWrap(True)
         lab.setStyleSheet("color: %s;" % _css(self._colors.muted))
         f = QFont(lab.font())
@@ -510,7 +526,8 @@ class SettingsDialog(QDialog):
         return lab
 
     def _heading(self, text: str) -> QLabel:
-        lab = QLabel(text, self)
+        lab = _plain(QLabel(self))
+        lab.setText(text)
         f = QFont(lab.font())
         f.setWeight(QFont.Weight.DemiBold)
         if f.pointSizeF() > 0:
@@ -654,7 +671,7 @@ class SettingsDialog(QDialog):
         pl = QVBoxLayout(picker)
         pl.setContentsMargins(10, 10, 10, 10)
         pl.setSpacing(6)
-        lab = QLabel("Add a field from your note types", picker)
+        lab = _plain(QLabel("Add a field from your note types", picker))
         f = QFont(lab.font())
         f.setWeight(QFont.Weight.DemiBold)
         lab.setFont(f)
