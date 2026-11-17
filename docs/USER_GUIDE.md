@@ -9,7 +9,7 @@ It runs in Anki on a computer (Windows, Mac or Linux), Anki 25.02 or newer. Phon
 ## Set it up once
 
 1. Open **Tools → Special Fields by Ankoma**.
-2. **Fields.** For each field, pick **Keep mine** or **Take the update's**. Out of the box, only Personal Notes is kept. Use **+ Add field** to add any other field from your note types.
+2. **Fields.** For each field, pick **Keep mine** or **Take the update's**. Out of the box, only Personal Notes is kept. Use **+ Add field** to add any other field from your note types, and the **✕** beside a field to take it off the list. The starting fields are only suggestions: remove any your decks don't use. A field that isn't listed takes the update's content.
 3. **Protected tags.** Start typing a tag you already use, then click it in the list, or press Enter to add the highlighted one. An update never removes a protected tag from your notes. Protecting `#edited` also protects its sub-tags, such as `#edited::images`.
 4. **Update card templates and styling.** On: an update can replace how your cards look. Off: your existing templates and styling are left as they are. A brand-new card type added by an update still arrives.
 5. Press **Save**. Your choices are used for every import until you change them.

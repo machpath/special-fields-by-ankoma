@@ -8,7 +8,8 @@ from PyQt6.QtTest import QTest
 
 from aqt.qt import QDialog, QPalette, QColor, QApplication, QWidget, QPushButton, Qt
 
-from special_fields_by_ankoma.config import DEFAULT_FIELDS, default_settings
+from special_fields_by_ankoma.config import (
+    DEFAULT_FIELDS, default_settings, settings_from_config, settings_to_config)
 from special_fields_by_ankoma.model import ACCENT_COLOR, FieldChoice, Settings
 from special_fields_by_ankoma.settings_dialog import (
     KEEP_LABEL,
@@ -100,13 +101,39 @@ def test_toggle_field_moves_accent_and_changes_result(make_dialog):
     assert dlg.result_settings().kept_field_names() == frozenset()
 
 
-def test_default_rows_not_removable(make_dialog):
+def test_default_rows_are_removable(make_dialog):
     dlg = make_dialog()
+    assert not dlg.no_fields_label.isVisible()
     for row in dlg.field_rows():
-        assert row.remove_button is None
-        assert row.findChild(QWidget, "remove_field_button") is None
-    assert dlg.remove_field("Text") is False
-    assert len(dlg.field_rows()) == len(DEFAULT_FIELDS)
+        assert row.remove_button is not None
+    QTest.mouseClick(dlg.row_for("Header").remove_button, Qt.MouseButton.LeftButton)
+    assert dlg.row_for("Header") is None
+    assert [f.name for f in dlg.result_settings().fields] == [
+        "Text", "Extra", "Personal Notes", "Textbook", "Citation"]
+    assert dlg.result_settings().kept_field_names() == frozenset({"personal notes"})
+    # A removed default can be added back like any other field.
+    dlg.open_field_picker()
+    assert "Header" in list_texts(dlg.field_matches)
+    assert dlg.add_field("Header") is True
+    assert dlg.row_for("Header").toggle.keep() is False
+
+
+def test_every_row_can_be_removed_and_it_round_trips(make_dialog):
+    dlg = make_dialog()
+    for name, _keep in DEFAULT_FIELDS:
+        assert dlg.remove_field(name) is True
+    assert dlg.field_rows() == []
+    assert not dlg.field_rows_frame.isVisible()
+    assert dlg.no_fields_label.isVisible()
+    got = dlg.result_settings()
+    assert got.fields == ()
+    # Saved and read back, the list stays empty: defaults do not creep back.
+    assert settings_from_config(settings_to_config(got)).fields == ()
+    dlg2 = make_dialog(settings=got)
+    assert dlg2.field_rows() == [] and dlg2.no_fields_label.isVisible()
+    QTest.mouseClick(dlg2.restore_button, Qt.MouseButton.LeftButton)
+    assert dlg2.result_settings() == default_settings()
+    assert dlg2.field_rows_frame.isVisible() and not dlg2.no_fields_label.isVisible()
 
 
 def test_saved_custom_rows_are_removable(make_dialog):
@@ -116,7 +143,7 @@ def test_saved_custom_rows_are_removable(make_dialog):
     )
     dlg = make_dialog(settings=s)
     row = dlg.row_for("Remarks")
-    assert row.removable and row.remove_button is not None and row.toggle.keep()
+    assert row.remove_button is not None and row.toggle.keep()
     QTest.mouseClick(row.remove_button, Qt.MouseButton.LeftButton)
     assert dlg.row_for("Remarks") is None
     assert dlg.result_settings() == default_settings()
@@ -145,7 +172,6 @@ def test_add_field_by_typing_and_enter_then_remove(make_dialog):
     assert row is not None
     assert row.toggle.keep() is False  # new rows start as "Take the update's"
     assert has_accent(row.toggle.take_button)
-    assert row.removable
     assert dlg.field_search.text() == ""
     assert "Lecture Notes" not in list_texts(dlg.field_matches)
     assert dlg.isVisible()  # Enter did not press Save
@@ -441,7 +467,7 @@ def test_restore_defaults(make_dialog):
     assert dlg.result_settings() == default_settings()
     assert dlg.tag_chips() == [] and dlg.tag_input.text() == ""
     assert not dlg.field_picker.isVisible()
-    assert all(r.remove_button is None for r in dlg.field_rows())
+    assert [r.name for r in dlg.field_rows()] == [n for n, _k in DEFAULT_FIELDS]
     assert dlg.isVisible()  # restore doesn't save or close
 
 

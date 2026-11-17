@@ -50,6 +50,7 @@ FIELDS_HELP = (
     "Matched by field name, so field order doesn't matter. "
     "A field a note type doesn't have is skipped for that type."
 )
+NO_FIELDS_TEXT = "No fields listed. Every field takes the update's content."
 TAGS_HEADING = "Protected tags"
 TAGS_HELP = (
     "An update never removes these tags from your notes, even when tags are "
@@ -66,7 +67,6 @@ ON_TEXT = "#FFFFFF"
 # every tag, so "the only match" is judged on the full collection.
 MAX_TAGS_SHOWN = 100
 
-_DEFAULT_FIELD_KEYS = frozenset(norm_field(name) for name, _keep in DEFAULT_FIELDS)
 
 _ENTER_KEYS = (Qt.Key.Key_Return, Qt.Key.Key_Enter)
 
@@ -411,16 +411,16 @@ class FieldToggle(QWidget):
 
 
 class FieldRow(QWidget):
-    """One field: name, optional ✕, and the toggle."""
+    """One field: name, ✕ (every row can be removed, the defaults too), and
+    the toggle."""
 
     remove_requested = pyqtSignal(str)
 
-    def __init__(self, name: str, keep: bool, removable: bool, colors: _Colors, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, name: str, keep: bool, colors: _Colors, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setObjectName("field_row")
         self.setProperty("field_name", name)
         self.name = name
-        self.removable = removable
         lay = QHBoxLayout(self)
         lay.setContentsMargins(12, 6, 10, 6)
         lay.setSpacing(6)
@@ -429,19 +429,17 @@ class FieldRow(QWidget):
         self.label.setText(self.label.fontMetrics().elidedText(name, Qt.TextElideMode.ElideMiddle, 230))
         self.label.setToolTip(_plain_tooltip(name))
         lay.addWidget(self.label, 0)
-        self.remove_button: Optional[QToolButton] = None
-        if removable:
-            rb = QToolButton(self)
-            rb.setObjectName("remove_field_button")
-            rb.setText("✕")
-            rb.setAutoRaise(True)
-            rb.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-            rb.setCursor(Qt.CursorShape.PointingHandCursor)
-            rb.setToolTip("Remove this field")
-            rb.setAccessibleName("Remove field %s" % name)
-            rb.clicked.connect(lambda: self.remove_requested.emit(self.name))
-            self.remove_button = rb
-            lay.addWidget(rb, 0)
+        rb = QToolButton(self)
+        rb.setObjectName("remove_field_button")
+        rb.setText("✕")
+        rb.setAutoRaise(True)
+        rb.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        rb.setCursor(Qt.CursorShape.PointingHandCursor)
+        rb.setToolTip("Remove this field from the list")
+        rb.setAccessibleName("Remove field %s" % name)
+        rb.clicked.connect(lambda: self.remove_requested.emit(self.name))
+        self.remove_button = rb
+        lay.addWidget(rb, 0)
         lay.addStretch(1)
         self.toggle = FieldToggle(name, keep, colors, self)
         lay.addWidget(self.toggle, 0)
@@ -653,6 +651,9 @@ class SettingsDialog(QDialog):
         self._rows_layout.setContentsMargins(1, 1, 1, 1)
         self._rows_layout.setSpacing(0)
         sec.addWidget(self.field_rows_frame)
+        self.no_fields_label = self._muted_label(NO_FIELDS_TEXT, "no_fields_label")
+        self.no_fields_label.hide()
+        sec.addWidget(self.no_fields_label)
 
         self.add_field_button = QPushButton("+ Add field", self)
         self.add_field_button.setObjectName("add_field_button")
@@ -780,7 +781,8 @@ class SettingsDialog(QDialog):
         for row in list(self._rows):
             self._drop_row(row)
         for fc in settings.fields:
-            self._append_row(fc.name, fc.keep, norm_field(fc.name) not in _DEFAULT_FIELD_KEYS)
+            self._append_row(fc.name, fc.keep)
+        self._show_rows_or_empty_note()
         self._tags = list(settings.protected_tags)
         self._rebuild_chips()
         self.styling_switch.setChecked(bool(settings.update_note_types))
@@ -821,17 +823,22 @@ class SettingsDialog(QDialog):
                 return r
         return None
 
-    def _append_row(self, name: str, keep: bool, removable: bool) -> FieldRow:
+    def _append_row(self, name: str, keep: bool) -> FieldRow:
         if self._rows:
             sep = QFrame(self.field_rows_frame)
             sep.setObjectName("row_separator")
             sep.setFixedHeight(1)
             self._rows_layout.addWidget(sep)
-        row = FieldRow(name, keep, removable, self._colors, self.field_rows_frame)
+        row = FieldRow(name, keep, self._colors, self.field_rows_frame)
         row.remove_requested.connect(self.remove_field)
         self._rows_layout.addWidget(row)
         self._rows.append(row)
+        self._show_rows_or_empty_note()
         return row
+
+    def _show_rows_or_empty_note(self) -> None:
+        self.field_rows_frame.setVisible(bool(self._rows))
+        self.no_fields_label.setVisible(not self._rows)
 
     def _drop_row(self, row: FieldRow) -> None:
         idx = self._rows_layout.indexOf(row)
@@ -846,10 +853,11 @@ class SettingsDialog(QDialog):
             w.hide()
             w.setParent(None)
             w.deleteLater()
+        self._show_rows_or_empty_note()
 
     def remove_field(self, name: str) -> bool:
         row = self.row_for(name)
-        if row is None or not row.removable:
+        if row is None:
             return False
         self._drop_row(row)
         self._refresh_field_matches()
@@ -913,7 +921,7 @@ class SettingsDialog(QDialog):
             self._set_field_hint('"%s" is already in the list.' % self.row_for(name).name)
             return False
         spelled = known[key]
-        self._append_row(spelled, False, key not in _DEFAULT_FIELD_KEYS)
+        self._append_row(spelled, False)
         self.field_search.blockSignals(True)
         self.field_search.clear()
         self.field_search.blockSignals(False)
