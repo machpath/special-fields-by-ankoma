@@ -26,16 +26,19 @@ MAX_SHOWN = 12
 DEFAULTS = sfa_config.default_settings()
 
 
-def settings(keep=(), take=(), protected=(), update_note_types=True, rules=()) -> Settings:
+def settings(keep=(), take=(), protected=(), update_note_types=True, rules=(), legacy=()) -> Settings:
     """`keep` names are "Keep mine", `take` names are "Take the update's".
-    `rules`: (tag, field names) pairs for protected tags that also keep
-    fields (contract rule 14); field names == "all" means every field."""
+    `rules`: (tag, field names) pairs, each protected tag's own frozen table
+    (contract rule 14); field names == "all" means "Keep every field".
+    `legacy`: (tag, field names) pairs saved by beta 8 ({"tag",
+    "keep_fields"}, not frozen yet: the main list plus these)."""
     return Settings(
         fields=tuple(FieldChoice(n, True) for n in keep) + tuple(FieldChoice(n, False) for n in take),
         protected_tags=tuple(protected),
         update_note_types=update_note_types,
-        tag_rules=tuple(TagRule(t, (), True) if f == "all" else TagRule(t, tuple(f), False)
-                        for t, f in rules),
+        tag_rules=tuple(TagRule(t, (), True, ()) if f == "all" else TagRule(t, (), False, tuple(f))
+                        for t, f in rules)
+        + tuple(TagRule(t, (), True) if f == "all" else TagRule(t, tuple(f), False) for t, f in legacy),
     )
 
 
@@ -239,26 +242,60 @@ def update_has_no_content(update: Dict[str, NoteSnap], imported: Iterable[str],
             if (t, norm_field(f)) not in content}
 
 
-def kept_on_note(before: Optional[NoteSnap], settings: Settings) -> Tuple[Set[str], bool]:
-    """Contract rule 14, read from the contract: the normalized names of the
-    fields kept on a note (the "Keep mine" fields plus the fields of every
-    protected tag the note carried BEFORE the import, a sub-tag carrying
-    its parent's rule, case-insensitive), and whether every field is kept.
-    A rule counts only for a tag that is protected."""
-    kept = {norm_field(f.name) for f in settings.fields if f.keep}
-    every = False
-    if before is None:
-        return kept, every
-    protected = {norm_tag(t) for t in settings.protected_tags if norm_tag(t)}
-    mine = [norm_tag(t) for t in before.tags]
+def _tag_table(settings: Settings, tag: str) -> Tuple[Set[str], bool]:
+    """Contract rule 14, read from the contract: what one protected tag
+    keeps. Its own frozen table (`fields`) when it has one; a plain string
+    (beta 7) the main list's "Keep mine" fields; a beta 8 entry those plus
+    its `keep_fields`."""
+    main = {norm_field(f.name) for f in settings.fields if f.keep}
     for rule in settings.tag_rules:
-        rt = norm_tag(rule.tag)
-        if rt not in protected:
+        if norm_tag(rule.tag) != norm_tag(tag):
             continue
-        if any(t == rt or t.startswith(rt + "::") for t in mine):
-            every = every or rule.keep_all
-            kept |= {norm_field(f) for f in rule.keep_fields if norm_field(f)}
+        if rule.fields is not None:
+            return {norm_field(f) for f in rule.fields if norm_field(f)}, rule.keep_all
+        return main | {norm_field(f) for f in rule.keep_fields if norm_field(f)}, rule.keep_all
+    return main, False
+
+
+def carried_tags(before: Optional[NoteSnap], settings: Settings) -> List[str]:
+    """The protected tags a note carried BEFORE the import (the tag itself
+    or a sub-tag of it, case-insensitive)."""
+    if before is None:
+        return []
+    mine = [norm_tag(t) for t in before.tags]
+    out = []
+    for p in settings.protected_tags:
+        n = norm_tag(p)
+        if n and n not in out and any(t == n or t.startswith(n + "::") for t in mine):
+            out.append(n)
+    return out
+
+
+def kept_on_note(before: Optional[NoteSnap], settings: Settings) -> Tuple[Set[str], bool]:
+    """Contract rule 14: the normalized names of the fields kept on a note,
+    and whether every field is kept. A note that carried protected tags
+    follows the union of their tables and NOT the main list; any other note
+    (and a new one) follows the main list."""
+    tags = carried_tags(before, settings)
+    if not tags:
+        return {norm_field(f.name) for f in settings.fields if f.keep}, False
+    kept: Set[str] = set()
+    every = False
+    for t in tags:
+        names, all_ = _tag_table(settings, t)
+        kept |= names
+        every = every or all_
     return kept, every
+
+
+def listed_on_note(before: Optional[NoteSnap], settings: Settings) -> Set[str]:
+    """Rule 9's "listed" for one note: every row of the main list (either
+    choice) and, on a note that carried protected tags, the fields of their
+    tables."""
+    listed = listed_field_names(settings)
+    for t in carried_tags(before, settings):
+        listed |= _tag_table(settings, t)[0]
+    return listed
 
 
 def expected_fields(before: Optional[NoteSnap], update: NoteSnap, settings: Settings,
@@ -272,11 +309,12 @@ def expected_fields(before: Optional[NoteSnap], update: NoteSnap, settings: Sett
     a field not listed in the settings that the update has no content for
     on any added/updated note of the type gets the user's value back (rule
     9); otherwise the update's value ("" for a field the update lacks).
-    Rule 14: a protected tag the note carried before the import adds its
-    fields to "Keep mine" (or keeps every field) for that note only; for
-    rule 9 a field listed only in a tag rule is unlisted on other notes."""
+    Rule 14: a note that carried protected tags before the import keeps the
+    union of their tables' fields (or every field) INSTEAD of the main
+    list's "Keep mine"; for rule 9 a field in a tag's table counts as
+    listed only on notes that carry the tag."""
     names = list(field_names) if field_names is not None else list(update.fields)
-    listed = listed_field_names(settings)
+    listed = listed_on_note(before, settings)
     no_content = no_content or set()
     kept, every = kept_on_note(before, settings)
     exp: Dict[str, Tuple[str, str]] = {}
@@ -288,7 +326,7 @@ def expected_fields(before: Optional[NoteSnap], update: NoteSnap, settings: Sett
             # Rule 14: "every field" = every field the note had before; a
             # field new to the note takes the update's.
             if every or key in kept:
-                exp[name] = (before.field(name), "Keep mine" if settings.keeps_field(name) else "Keep mine (tag rule)")
+                exp[name] = (before.field(name), "Keep mine (tag table)" if carried_tags(before, settings) else "Keep mine")
                 continue
             if key not in listed and (update.notetype, key) in no_content:
                 exp[name] = (before.field(name), "rule 9: update has no content")

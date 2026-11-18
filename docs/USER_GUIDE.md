@@ -8,31 +8,39 @@ It runs in Anki on a computer (Windows, Mac or Linux), Anki 25.02 or newer. Phon
 
 ## Set it up once
 
-1. Open **Tools → Special Fields by Ankoma**.
+1. Open **Tools → Special Fields by Ankoma**. Each section has a small **(i)** button: point at it, or click it (or press Space or Enter on it), to read what the section does.
 2. **Fields.** For each field, pick **Keep mine** or **Take the update's**. Out of the box, only Personal Notes is kept. Use **+ Add field** to add any other field from your note types, and the **✕** beside a field to take it off the list. The starting fields are only suggestions: remove any your decks don't use. A field that isn't listed takes the update's content. One exception protects you: if the update leaves a field empty on every card of a note type (a personal notes field, for example), your text in that field stays even when the field isn't listed.
-3. **Protected tags.** Start typing a tag you already use, then click it in the list, or press Enter to add the highlighted one. An update never removes a protected tag from your notes. Protecting `#edited` also protects its sub-tags, such as `#edited::images`. A protected tag can also keep extra fields on the cards that have it (see below).
+3. **Protected tags.** Start typing a tag you already use, then click it in the list, or press Enter to add the highlighted one. An update never removes a protected tag from your notes. Protecting `#edited` also protects its sub-tags, such as `#edited::images`. Each protected tag also has its own field choices for the cards that have it (see below).
 4. **Update card templates and styling.** On: an update can replace how your cards look. Off: your existing templates and styling are left as they are. A brand-new card type added by an update still arrives.
 5. **Import learning progress** (off unless you turn it on). On: cards that are new to your collection arrive with the scheduling and review history stored in the file. Cards you already have always keep your own progress. Off: new cards arrive as new.
 6. **Import deck options** (off unless you turn it on). Deck options are the settings behind a deck's gear icon: daily limits, learning steps, FSRS settings. Anki saves each set of them as a "preset". On: presets in the file that you don't have yet are added, and the decks in the file switch to the preset the file gives them (a deck the file puts on "Default" keeps yours). Presets you already have are never changed. Off: no presets are imported and no deck changes its preset.
 7. Press **Save**. Your choices are used for every import until you change them.
 
-## Keep extra fields on cards with a tag
+## Different field choices for cards with a tag
 
-Sometimes you want to keep more on some cards than on others. Each protected tag has its own **+ Add field**: the fields you add there are kept on every card that has the tag, on top of the fields you keep everywhere.
+Sometimes you want to keep more on some cards than on others, or less. Each protected tag has its own list of fields with the same **Keep mine** / **Take the update's** choice as the list above. Cards that have the tag follow the tag's list instead of the list above.
 
-Example: Personal Notes is set to **Keep mine**, and everything else to **Take the update's**. You tag the cards you rewrote with `#edited`, protect `#edited`, and add **Text** and **Extra** to it. When you update:
+Under the tag box, each protected tag takes one line: an arrow, the tag, what it keeps ("keeps Header, Personal Notes"), and a **✕** to stop protecting it. The lines start closed. Click a tag's line or its arrow (or press Space or Enter on the arrow) to open its list; only one tag is open at a time. A tag you have just added opens by itself.
 
-- cards tagged `#edited` keep your Text, Extra and Personal Notes, and get the update's Header, Textbook, Citation and tags (`#edited` stays);
-- every other card keeps only your Personal Notes.
+**How a new tag starts.** A new tag starts with the choices of the tag you added before it, plus every field you keep in the list above. The first tag starts with the list above. After that, a tag's choices change only when you change them. Changing the list above later does not change tags you already have; only tags you add afterwards start from the new list.
+
+Example, with Personal Notes kept in the list above:
+
+1. You add `#edited`. It opens with Personal Notes kept. You also keep Header.
+2. You add `#hard`. It opens with Header and Personal Notes kept, as `#edited` had.
+3. You add `#easy`. It opens with Header and Personal Notes. You change it to Text and Extra, and switch Personal Notes to **Take the update's**.
+4. You add `#text-based`. It opens with Text, Extra and Personal Notes: Personal Notes is back, because the list above keeps it.
+
+When you update, cards tagged `#easy` keep your Text and Extra and take the update's Personal Notes, even though the list above keeps Personal Notes: a tag's list can switch off a field that is kept above. Cards with none of these tags keep only your Personal Notes.
 
 Good to know:
 
-- Sub-tags count: a card tagged `#edited::images` follows the rule of `#edited`.
+- Sub-tags count: a card tagged `#edited::images` follows the list of `#edited`.
 - What counts is the tags a card has before the update.
-- A card with several protected tags keeps the fields of all of them.
-- Choose **Every field** in a tag's list to keep everything you have on those cards. A field the update adds that the card didn't have yet still arrives.
-- A tag with no fields added ("Tag only") just keeps the tag, as before.
-- Remove a field, or the whole tag, with its **✕**.
+- A card with several protected tags keeps a field if any of their lists keeps it.
+- Tick **Keep every field** under a tag's list to keep everything you have on those cards. A field the update adds that the card didn't have yet still arrives.
+- A field you add to the list above appears in every tag's list as **Take the update's**. A field you remove from the list above leaves the tags' lists, except where a tag keeps it: there it stays, at the end, until you switch it off.
+- Tags you protected with an earlier version of the add-on keep working as before. The next time you press **Save** in the settings, each one is saved with its own list, set to what it kept at that moment.
 
 ## Update a deck
 
@@ -50,7 +58,7 @@ The question appears for every `.apkg` you open, including decks that are new to
 
 ## What an update does
 
-- **Fields set to "Take the update's"** get the new content. Fields set to **Keep mine** keep what you had, and so do the fields you added to a protected tag, on the cards that have that tag.
+- **Fields set to "Take the update's"** get the new content. Fields set to **Keep mine** keep what you had. On cards with a protected tag, the tag's own list decides instead.
 - **Fields that aren't in your list** take the update's content. If the update has nothing at all for a field, such as one you added to the note type yourself, yours is left alone. To be certain a field of yours is kept, add it to the list as **Keep mine**.
 - **Tags** on an updated note are replaced with the update's tags. The only tags that stay are the ones you protected. If you want to keep a tag of your own, protect it before you update.
 - **Your review history** is never changed. With **Import learning progress** on, cards that are new to your collection also bring the history stored in the file; the history of cards you already have stays exactly as it was.

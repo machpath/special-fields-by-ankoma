@@ -389,10 +389,13 @@ def _restore_notes(
         return
     touched: Set[int] = updated.union(added_ids)
     kept = settings.kept_field_names()
-    # Rule 14: fields kept per protected tag, decided by the note's tags
-    # before the import. None when no protected tag keeps a field (the
-    # common case: every note then keeps exactly `kept`).
+    # Rule 14: a note that carried protected tags before the import follows
+    # their tables instead of the main list. None when every table equals
+    # the main list (the common case: every note then keeps exactly `kept`).
     kept_for = _tag_rule_lookup(settings)
+    # Rule 9 skips the main list's rows (either choice). On a note with
+    # protected tags the fields of its tags count as listed too, but those
+    # are kept on that note anyway, so `listed` needs nothing more.
     listed = frozenset(norm_field(f.name) for f in settings.fields)
     protects = settings.protects_tag
     want_tags = any(norm_tag(t) for t in settings.protected_tags)
@@ -492,45 +495,59 @@ def _restore_notes(
 
 def _tag_rule_lookup(settings: Settings) -> Optional[Callable[[str], Tuple[FrozenSet[str], bool]]]:
     """Rule 14: a function from a note's raw pre-import tag string to
-    (normalized kept field names, keep every field), or None when no
-    protected tag keeps a field. Results are cached per tag string and per
-    tag, so the cost grows with the number of distinct tags, not notes."""
-    rules = [
-        (norm_tag(r.tag), frozenset(norm_field(f) for f in r.keep_fields if norm_field(f)), r.keep_all)
-        for r in settings.active_tag_rules()
-    ]
-    rules = [r for r in rules if r[0]]
-    if not rules:
-        return None
+    (normalized kept field names, keep every field), or None when every
+    protected tag's table equals the main list (the common case, and every
+    config of beta 7: every note then keeps exactly the main list's fields).
+
+    A note that carries protected tags (sub-tags included) follows the union
+    of their tables, not the main list; any other note follows the main
+    list. Results are cached per tag string and per tag, so the cost grows
+    with the number of distinct tags, not notes."""
     base = settings.kept_field_names()
+    tables: List[Tuple[str, FrozenSet[str], bool]] = []
+    for tag in settings.protected_tags:
+        key = norm_tag(tag)
+        if key:
+            kept, every = settings.tag_table(tag)
+            tables.append((key, kept, every))
+    if all(kept == base and not every for _key, kept, every in tables):
+        return None
     none: Tuple[FrozenSet[str], bool] = (base, False)
-    per_tag: Dict[str, Tuple[FrozenSet[str], bool]] = {}
+    # a tag that is not protected: None
+    per_tag: Dict[str, Optional[Tuple[FrozenSet[str], bool]]] = {}
     per_string: Dict[str, Tuple[FrozenSet[str], bool]] = {}
 
-    def for_tag(tag: str) -> Tuple[FrozenSet[str], bool]:
+    def for_tag(tag: str) -> Optional[Tuple[FrozenSet[str], bool]]:
         key = norm_tag(tag)
-        got = per_tag.get(key)
-        if got is None:
-            names: Set[str] = set()
-            every = False
-            for rtag, rfields, rall in rules:
-                # the same test as model.is_protected_tag: the tag or a sub-tag
-                if key == rtag or key.startswith(rtag + "::"):
-                    names |= rfields
-                    every = every or rall
-            got = per_tag[key] = (frozenset(names), every)
+        if key in per_tag:
+            return per_tag[key]
+        got: Optional[Tuple[FrozenSet[str], bool]] = None
+        for ptag, kept, every in tables:
+            # the same test as model.is_protected_tag: the tag or a sub-tag
+            if key == ptag or key.startswith(ptag + "::"):
+                if got is None:
+                    got = (kept, every)
+                else:
+                    got = (got[0] | kept, got[1] or every)
+        per_tag[key] = got
         return got
 
     def lookup(raw_tags: str) -> Tuple[FrozenSet[str], bool]:
         got = per_string.get(raw_tags)
         if got is None:
-            names: Set[str] = set(base)
+            names: Set[str] = set()
             every = False
+            carried = False
             for tag in raw_tags.split():
-                extra, all_ = for_tag(tag)
-                names |= extra
-                every = every or all_
-            got = none if (not every and len(names) == len(base)) else (frozenset(names), every)
+                table = for_tag(tag)
+                if table is not None:
+                    carried = True
+                    names |= table[0]
+                    every = every or table[1]
+            if not carried or (not every and names == base):
+                got = none
+            else:
+                got = (frozenset(names), every)
             per_string[raw_tags] = got
         return got
 

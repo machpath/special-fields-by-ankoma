@@ -14,20 +14,22 @@ Widgets carry objectNames so tests and other workstreams can find them:
     add_field_button  "+ Add field"
     field_picker      the inline field search (hidden until opened)
     field_search, field_matches, field_done_button, field_hint
-    tag_chips         container of one `TagBlock` per protected tag
-                      ("tag_block", property "tag"; `TagChip` is the old
-                      name of the class)
-    tag_chip_label    the tag's name in its block (elided in the middle)
-    remove_tag_button the ✕ that stops protecting the tag
-    tag_keep_label    "On cards with this tag, also keep" / "Tag only"
-    tag_field_chip    one field kept on the tag's cards (property
-                      "field_name"; "Every field" has property "every")
-    remove_tag_field_button  the ✕ on such a chip
-    tag_add_field_button     the tag's own "+ Add field"
-    tag_field_picker  the tag's inline field search: tag_field_search,
-                      tag_field_matches, tag_field_done_button,
-                      tag_field_hint
+    info_button       an (i) bubble (property "topic": "Fields",
+                      "Protected tags" or a switch's title); the dialog's
+                      `info_buttons` dict has them by "fields", "tags",
+                      "styling", "scheduling", "presets"
     tag_input, tag_list, tag_hint
+    tag_blocks        container of one `TagBlock` per protected tag, under
+                      the tag box ("tag_block", property "tag"; `TagChip`
+                      is the old name of the class)
+    tag_header        a tag's line: tag_expand_button (the arrowhead),
+                      tag_chip_label (the tag, elided in the middle),
+                      tag_summary ("keeps Header, Personal Notes"),
+                      remove_tag_button (the ✕)
+    tag_table         the tag's table, shown when the tag is open:
+                      tag_field_rows holding one "tag_field_row" (property
+                      "field_name") per field, each with a compact toggle,
+                      and tag_keep_all ("Keep every field")
     styling_switch    "Update card templates and styling"
     scheduling_switch "Import learning progress"
     presets_switch    "Import deck options"
@@ -61,41 +63,52 @@ from .model import (
 WINDOW_TITLE = ADDON_NAME + ": Settings"
 KEEP_LABEL = "Keep mine"
 TAKE_LABEL = "Take the update's"
-FIELDS_HEADING = "Fields: when an update changes a card…"
-FIELDS_HELP = (
-    "Matched by field name, so field order doesn't matter. "
-    "A field a note type doesn't have is skipped for that type."
+FIELDS_HEADING = "Fields"
+FIELDS_INFO = (
+    "Choose what happens to each field when an update changes a card you already "
+    "have. Keep mine: your text in that field stays. Take the update's: the "
+    "update's text replaces yours. Fields are matched by name, so their order "
+    "doesn't matter, and a field a note type doesn't have is skipped. A field that "
+    "isn't listed takes the update's text, unless the update leaves that field "
+    "empty on every card."
 )
 NO_FIELDS_TEXT = (
     "No fields listed. Every field takes the update's content. Where the update "
     "leaves a field empty on every card, your text in it stays."
 )
 TAGS_HEADING = "Protected tags"
-TAGS_HELP = (
-    "An update never removes these tags. You can also keep extra fields on "
-    "the cards that have a tag."
+TAGS_INFO = (
+    "An update replaces a card's tags with the update's. A protected tag is never "
+    "removed from your cards; its sub-tags are covered too. Cards with a protected "
+    "tag follow that tag's own field choices instead of the choices above: open a "
+    "tag to set them. A new tag starts with the previous tag's choices plus every "
+    "field you keep above; after that, a tag's choices change only when you change "
+    "them. A card with several protected tags keeps a field if any of them keeps it."
 )
-TAG_KEEP_TEXT = "On cards with this tag, also keep"
-TAG_ONLY_TEXT = "Tag only"
-EVERY_FIELD_LABEL = "Every field"
+KEEP_EVERY_FIELD_LABEL = "Keep every field"
 STYLING_HEADING = "Update card templates and styling"
-STYLING_HELP = (
-    "On: an update may replace your card templates and styling. "
-    "Off: yours are kept exactly as they are. Note content updates either way."
+STYLING_INFO = (
+    "On: an update may replace your card templates and styling with its own. "
+    "Off: yours stay exactly as they are. Card content updates either way."
 )
 SCHEDULING_HEADING = "Import learning progress"
-SCHEDULING_HELP = (
+SCHEDULING_INFO = (
     "On: cards that are new to your collection arrive with the scheduling and "
-    "review history stored in the file. Cards you already have always keep "
-    "your own progress. Off: new cards arrive as new."
+    "review history saved in the file. Cards you already have always keep your "
+    "own progress. Off: new cards arrive as new. Useful for moving a deck to "
+    "another computer without syncing."
 )
 # Anki calls these "deck presets"; the author found "deck options" clearer.
 PRESETS_HEADING = "Import deck options"
-PRESETS_HELP = (
+PRESETS_INFO = (
     "On: deck options saved in the file (daily limits, learning steps, FSRS "
     "settings) come in as new presets, and the file's decks use them. Options "
     "you already have are never changed. Off: no deck options are imported."
 )
+# The (i) texts wrap at about this many pixels, so a bubble is never wide.
+INFO_WRAP_WIDTH = 340
+# The tag column of the collapsed tag lines is at most this wide.
+TAG_COLUMN_WIDTH = 190
 ON_TEXT = "#FFFFFF"
 DISCARD_QUESTION = "Discard your changes?"
 DISCARD_LABEL = "Discard"
@@ -206,13 +219,10 @@ def confirm_discard(parent: Optional[QWidget]) -> bool:
 def choices_summary(settings: Settings) -> List[Tuple[str, str]]:
     """Rows for the "Your saved choices" box, in display order."""
     kept = [f.name for f in settings.fields if f.keep]
+    entries = tag_summary_entries(settings)
     return [
         ("Fields you keep", ", ".join(kept) if kept else "None"),
-        (
-            "Protected tags",
-            ", ".join(_tag_summary(settings, t) for t in settings.protected_tags)
-            if settings.protected_tags else "None",
-        ),
+        ("Protected tags", ", ".join(entries) if entries else "None"),
         ("Tags", "Replaced with the update's"),
         ("Card styling", "Update" if settings.update_note_types else "Keep mine"),
         (
@@ -223,15 +233,68 @@ def choices_summary(settings: Settings) -> List[Tuple[str, str]]:
     ]
 
 
-def _tag_summary(settings: Settings, tag: str) -> str:
-    """One protected tag for the summary: "#edited (keeps Text, Extra)",
-    "#edited (keeps every field)" or just "#eevee" (rule 14)."""
-    rule = settings.rule_for(tag)
-    if rule is None:
-        return tag
-    if rule.keep_all:
-        return "%s (keeps every field)" % tag
-    return "%s (keeps %s)" % (tag, ", ".join(rule.keep_fields))
+def keeps_text(fields: Sequence[str], keep_all: bool) -> str:
+    """A tag's table in a few words: "keeps Header, Personal Notes",
+    "keeps every field" or "keeps no fields"."""
+    if keep_all:
+        return "keeps every field"
+    if not fields:
+        return "keeps no fields"
+    return "keeps " + ", ".join(fields)
+
+
+def tag_summary_entries(settings: Settings) -> List[str]:
+    """One entry per protected tag for the summary: "#edited (keeps Header,
+    Personal Notes)", "(keeps every field)", "(keeps no fields)"; a tag
+    saved by an earlier beta, with no frozen table yet, by name only."""
+    out = []
+    for tag in settings.protected_tags:
+        rule = settings.rule_for(tag)
+        if rule is None or not rule.is_frozen():
+            out.append(tag)
+        else:
+            out.append("%s (%s)" % (tag, keeps_text(rule.fields or (), rule.keep_all)))
+    return out
+
+
+def split_tag_summary(value: str) -> List[str]:
+    """The entries of a "Protected tags" summary value, as joined by
+    `choices_summary`. Anki tags never contain a space, so an entry is a tag
+    up to the first space, then, if it follows, "(keeps …)" up to the first
+    ")" that ends the value or is followed by ", "."""
+    out: List[str] = []
+    i, n = 0, len(value)
+    while i < n:
+        j = i
+        while j < n and value[j] != " " and not value.startswith(", ", j):
+            j += 1
+        if value.startswith(" (", j):
+            k = j + 2
+            while k < n:
+                if value[k] == ")" and (k + 1 == n or value.startswith(", ", k + 1)):
+                    break
+                k += 1
+            j = min(k + 1, n)
+        out.append(value[i:j])
+        i = j + 2 if value.startswith(", ", j) else j + 1
+    return [e for e in out if e]
+
+
+def wrap_plain(text: str, fm: QFontMetrics, width: int) -> str:
+    """`text` broken into lines no wider than `width` pixels (at spaces), for
+    a plain-text tooltip: Qt does not wrap plain tooltips by itself."""
+    lines: List[str] = []
+    line = ""
+    for word in text.split():
+        trial = word if not line else line + " " + word
+        if line and fm.horizontalAdvance(trial) > width:
+            lines.append(line)
+            line = word
+        else:
+            line = trial
+    if line:
+        lines.append(line)
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -290,25 +353,27 @@ class _Colors:
             self.focus = self.text
 
 
-def _segment_css(colors: _Colors, selected: bool, side: str) -> str:
+def _segment_css(colors: _Colors, selected: bool, side: str, compact: bool = False) -> str:
     """Stylesheet for one side of a two-part toggle.
 
     The selected side is accent-filled with white text; the other is plain.
     Border + padding add up to the same size with and without focus, so the
-    row doesn't jump when focus moves.
+    row doesn't jump when focus moves. `compact`: the smaller toggle of a
+    tag's table.
     """
+    v, h = (2, 9) if compact else (5, 12)
     if selected:
         bg, fg, bd, weight = colors.accent, QColor(ON_TEXT), colors.accent, 600
     else:
         bg, fg, bd, weight = colors.base, colors.plain_text, colors.border, 400
     if side == "left":
         radius = "border-top-left-radius: 6px; border-bottom-left-radius: 6px;"
-        normal = "border: 1px solid %s; padding: 5px 12px;" % _css(bd)
-        focus = "border: 2px solid %s; padding: 4px 11px;" % _css(colors.focus)
+        normal = "border: 1px solid %s; padding: %dpx %dpx;" % (_css(bd), v, h)
+        focus = "border: 2px solid %s; padding: %dpx %dpx;" % (_css(colors.focus), v - 1, h - 1)
     else:
         radius = "border-top-right-radius: 6px; border-bottom-right-radius: 6px;"
-        normal = "border: 1px solid %s; border-left: none; padding: 5px 12px 5px 13px;" % _css(bd)
-        focus = "border: 2px solid %s; padding: 4px 11px 4px 11px;" % _css(colors.focus)
+        normal = "border: 1px solid %s; border-left: none; padding: %dpx %dpx %dpx %dpx;" % (_css(bd), v, h, v, h + 1)
+        focus = "border: 2px solid %s; padding: %dpx %dpx;" % (_css(colors.focus), v - 1, h - 1)
     return (
         "QPushButton { background: %s; color: %s; font-weight: %d; margin: 0; %s %s }"
         "QPushButton:focus { %s }"
@@ -318,71 +383,6 @@ def _segment_css(colors: _Colors, selected: bool, side: str) -> str:
 
 # ---------------------------------------------------------------------------
 # Small widgets
-
-
-class _FlowLayout(QLayout):
-    """Lays children out left to right, wrapping onto new lines (tag chips)."""
-
-    def __init__(self, parent: Optional[QWidget] = None, spacing: int = 6) -> None:
-        super().__init__(parent)
-        self._items: List[QLayoutItem] = []
-        self._spacing = spacing
-        self.setContentsMargins(0, 0, 0, 0)
-
-    def addItem(self, item: QLayoutItem) -> None:  # noqa: N802 (Qt API)
-        self._items.append(item)
-
-    def count(self) -> int:
-        return len(self._items)
-
-    def itemAt(self, index: int) -> Optional[QLayoutItem]:  # noqa: N802
-        if 0 <= index < len(self._items):
-            return self._items[index]
-        return None
-
-    def takeAt(self, index: int) -> Optional[QLayoutItem]:  # noqa: N802
-        if 0 <= index < len(self._items):
-            return self._items.pop(index)
-        return None
-
-    def expandingDirections(self) -> Qt.Orientation:  # noqa: N802
-        return Qt.Orientation.Horizontal
-
-    def hasHeightForWidth(self) -> bool:  # noqa: N802
-        return True
-
-    def heightForWidth(self, width: int) -> int:  # noqa: N802
-        return self._layout(QRect(0, 0, width, 0), True)
-
-    def setGeometry(self, rect: QRect) -> None:  # noqa: N802
-        super().setGeometry(rect)
-        self._layout(rect, False)
-
-    def sizeHint(self) -> QSize:  # noqa: N802
-        return self.minimumSize()
-
-    def minimumSize(self) -> QSize:  # noqa: N802
-        size = QSize()
-        for item in self._items:
-            size = size.expandedTo(item.minimumSize())
-        m = self.contentsMargins()
-        return size + QSize(m.left() + m.right(), m.top() + m.bottom())
-
-    def _layout(self, rect: QRect, test_only: bool) -> int:
-        m = self.contentsMargins()
-        area = rect.adjusted(m.left(), m.top(), -m.right(), -m.bottom())
-        x, y, line_height = area.x(), area.y(), 0
-        for item in self._items:
-            hint = item.sizeHint()
-            if x > area.x() and x + hint.width() > area.right() + 1:
-                x = area.x()
-                y += line_height + self._spacing
-                line_height = 0
-            if not test_only:
-                item.setGeometry(QRect(QPoint(x, y), hint))
-            x += hint.width() + self._spacing
-            line_height = max(line_height, hint.height())
-        return y + line_height - rect.y() + m.bottom()
 
 
 class ToggleSwitch(QCheckBox):
@@ -448,10 +448,13 @@ class FieldToggle(QWidget):
 
     changed = pyqtSignal(bool)
 
-    def __init__(self, name: str, keep: bool, colors: _Colors, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self, name: str, keep: bool, colors: _Colors, parent: Optional[QWidget] = None, compact: bool = False
+    ) -> None:
         super().__init__(parent)
         self.setObjectName("field_toggle")
         self._colors = colors
+        self._compact = compact
         self.setAccessibleName(name)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -462,17 +465,22 @@ class FieldToggle(QWidget):
         self.take_button.setObjectName("take_button")
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
-        bold = QFont(self.font())
+        font = QFont(self.font())
+        if compact and font.pointSizeF() > 0:
+            font.setPointSizeF(max(8.0, font.pointSizeF() - 1))
+        bold = QFont(font)
         bold.setWeight(QFont.Weight.DemiBold)
         fm = QFontMetrics(bold)
         for btn, label in ((self.keep_button, KEEP_LABEL), (self.take_button, TAKE_LABEL)):
+            if compact:
+                btn.setFont(font)
             btn.setCheckable(True)
             btn.setAutoDefault(False)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setAccessibleName("%s: %s" % (name, label))
             # Wide enough for the bold (selected) text so toggling doesn't
             # change the row's width.
-            btn.setMinimumWidth(fm.horizontalAdvance(label) + 32)
+            btn.setMinimumWidth(fm.horizontalAdvance(label) + (24 if compact else 32))
             self._group.addButton(btn)
             lay.addWidget(btn)
         self.keep_button.setChecked(keep)
@@ -497,8 +505,8 @@ class FieldToggle(QWidget):
 
     def _restyle(self) -> None:
         keep = self.keep()
-        self.keep_button.setStyleSheet(_segment_css(self._colors, keep, "left"))
-        self.take_button.setStyleSheet(_segment_css(self._colors, not keep, "right"))
+        self.keep_button.setStyleSheet(_segment_css(self._colors, keep, "left", self._compact))
+        self.take_button.setStyleSheet(_segment_css(self._colors, not keep, "right", self._compact))
 
 
 class FieldRow(QWidget):
@@ -555,6 +563,13 @@ class _ElidedLabel(QLabel):
     def full_text(self) -> str:
         return self._full
 
+    def set_full_text(self, full: str) -> None:
+        self._full = full
+        self.setToolTip(_plain_tooltip(full))
+        self.setText(full)
+        self.updateGeometry()
+        self._elide()
+
     def sizeHint(self) -> QSize:  # noqa: N802
         fm = self.fontMetrics()
         return QSize(fm.horizontalAdvance(self._full) + 4, super().sizeHint().height())
@@ -575,53 +590,102 @@ class _ElidedLabel(QLabel):
             self.setText(text)
 
 
-class _TagFieldChip(QFrame):
-    """One field kept on a tag's cards (or "Every field"), with its ✕."""
+class InfoButton(QToolButton):
+    """A small round "i" after a heading or a switch's title. Its text shows
+    on hover (as a tooltip), and also when the button is clicked or, while
+    it has focus, activated with Enter or Space, so it works without a
+    mouse. The text is also the button's accessible description. Plain
+    text, broken into short lines so the bubble is never wide."""
 
-    remove_requested = pyqtSignal(str)
-
-    def __init__(self, name: str, tag: str, every: bool, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, topic: str, text: str, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setObjectName("tag_field_chip")
+        self.setObjectName("info_button")
+        self.setProperty("topic", topic)
+        self._text = text
+        self.setText("i")
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAccessibleName("About %s" % topic)
+        self.setAccessibleDescription(text)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.setToolTip(self.bubble_text())
+        self.clicked.connect(self.show_bubble)
+
+    def info_text(self) -> str:
+        return self._text
+
+    def bubble_text(self) -> str:
+        """The text as the bubble shows it: plain, in lines of at most
+        INFO_WRAP_WIDTH pixels in the tooltip font."""
+        return wrap_plain(self._text, QFontMetrics(QToolTip.font()), INFO_WRAP_WIDTH)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        d = max(18, self.fontMetrics().height() + 2)
+        return QSize(d, d)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return self.sizeHint()
+
+    def show_bubble(self) -> None:
+        """Show the text under the button (click, Enter or Space)."""
+        QToolTip.showText(self.mapToGlobal(QPoint(0, self.height() + 4)), self.bubble_text(), self)
+
+    def keyPressEvent(self, event: Any) -> None:  # noqa: N802
+        # Space clicks a tool button already; Enter does not, and must not
+        # reach the dialog's Save button either.
+        if event.key() in _ENTER_KEYS:
+            self.click()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class _ArrowButton(QToolButton):
+    """The arrowhead that opens or closes a tag's table: Space clicks it, as
+    any tool button; Enter does too (and never reaches the Save button)."""
+
+    def keyPressEvent(self, event: Any) -> None:  # noqa: N802
+        if event.key() in _ENTER_KEYS:
+            self.click()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class TagFieldRow(QWidget):
+    """One row of a protected tag's table: a field name and the same
+    two-sided toggle as the main list, smaller. No ✕: fields are managed in
+    the main list."""
+
+    def __init__(self, name: str, tag: str, keep: bool, colors: _Colors, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("tag_field_row")
         self.setProperty("field_name", name)
-        self.setProperty("every", every)
         self.name = name
-        self.every = every
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(8, 1, 2, 1)
-        lay.setSpacing(1)
-        label = _plain(QLabel(self))
-        label.setObjectName("tag_field_chip_label")
-        label.setText(label.fontMetrics().elidedText(name, Qt.TextElideMode.ElideMiddle, 200))
-        label.setToolTip(_plain_tooltip(name))
-        lay.addWidget(label)
-        rb = QToolButton(self)
-        rb.setObjectName("remove_tag_field_button")
-        rb.setText("✕")
-        rb.setAutoRaise(True)
-        rb.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        rb.setCursor(Qt.CursorShape.PointingHandCursor)
-        if every:
-            rb.setToolTip("Stop keeping every field on cards with this tag")
-            rb.setAccessibleName("Stop keeping every field on cards tagged %s" % tag)
-        else:
-            rb.setToolTip("Stop keeping this field on cards with this tag")
-            rb.setAccessibleName("Stop keeping %s on cards tagged %s" % (name, tag))
-        rb.clicked.connect(lambda: self.remove_requested.emit(self.name))
-        self.remove_button = rb
-        lay.addWidget(rb)
+        lay.setContentsMargins(10, 2, 6, 2)
+        lay.setSpacing(6)
+        self.label = _plain(QLabel(self))
+        self.label.setObjectName("tag_field_name_label")
+        self.label.setText(self.label.fontMetrics().elidedText(name, Qt.TextElideMode.ElideMiddle, 200))
+        self.label.setToolTip(_plain_tooltip(name))
+        lay.addWidget(self.label, 0)
+        lay.addStretch(1)
+        self.toggle = FieldToggle("%s on cards tagged %s" % (name, tag), keep, colors, self, compact=True)
+        lay.addWidget(self.toggle, 0)
 
 
 class TagBlock(QFrame):
-    """One protected tag: its name and ✕ on the first line; on the second,
-    the fields also kept on the cards that have it (or "Tag only") and its
-    own "+ Add field"; under that, the tag's field picker when open.
+    """One protected tag. Collapsed (the default): one line with the
+    arrowhead button, the tag, a short summary ("keeps Header, Personal
+    Notes") and ✕. Expanded: under that line, the tag's own table (the main
+    list's rows, compact) and "Keep every field".
 
-    The block only shows its data; the dialog owns it (`fields`,
-    `keep_all`) and calls `refresh()` after a change."""
+    The block only shows data; the dialog owns it and calls `set_rows()`
+    and `set_summary()` after a change."""
 
     remove_requested = pyqtSignal(str)
-    remove_field_requested = pyqtSignal(str, str)  # tag, field name ("" = every field)
+    toggle_requested = pyqtSignal(str)
 
     def __init__(self, tag: str, colors: _Colors, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -629,23 +693,38 @@ class TagBlock(QFrame):
         self.setProperty("tag", tag)
         self.setAccessibleName("Protected tag %s" % tag)
         self.tag = tag
-        self.fields: List[str] = []
-        self.keep_all = False
         self._colors = colors
-        self.matches: List[str] = []  # what the picker lists (EVERY_FIELD_LABEL first)
+        self._rows: List[TagFieldRow] = []
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 4, 0, 4)
-        outer.setSpacing(3)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        top = QHBoxLayout()
-        top.setSpacing(4)
-        self.label = _ElidedLabel(tag, self)
+        header = QWidget(self)
+        header.setObjectName("tag_header")
+        header.installEventFilter(self)
+        self.header = header
+        top = QHBoxLayout(header)
+        top.setContentsMargins(0, 1, 0, 1)
+        top.setSpacing(6)
+        eb = _ArrowButton(header)
+        eb.setObjectName("tag_expand_button")
+        eb.setAutoRaise(True)
+        eb.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        eb.setCursor(Qt.CursorShape.PointingHandCursor)
+        eb.clicked.connect(lambda: self.toggle_requested.emit(self.tag))
+        self.expand_button = eb
+        top.addWidget(eb, 0)
+        self.label = _ElidedLabel(tag, header)
         self.label.setObjectName("tag_chip_label")
         f = QFont(self.label.font())
         f.setWeight(QFont.Weight.DemiBold)
         self.label.setFont(f)
-        top.addWidget(self.label, 1)
-        rb = QToolButton(self)
+        top.addWidget(self.label, 0)
+        self.summary = _ElidedLabel("", header)
+        self.summary.setObjectName("tag_summary")
+        self.summary.setStyleSheet("color: %s;" % _css(colors.muted))
+        top.addWidget(self.summary, 1)
+        rb = QToolButton(header)
         rb.setObjectName("remove_tag_button")
         rb.setText("✕")
         rb.setAutoRaise(True)
@@ -656,120 +735,99 @@ class TagBlock(QFrame):
         rb.clicked.connect(lambda: self.remove_requested.emit(self.tag))
         self.remove_button = rb
         top.addWidget(rb, 0)
-        outer.addLayout(top)
+        outer.addWidget(header)
 
-        line = QHBoxLayout()
-        line.setSpacing(8)
-        self.keep_label = _plain(QLabel(self))
-        self.keep_label.setObjectName("tag_keep_label")
-        self.keep_label.setStyleSheet("color: %s;" % _css(colors.muted))
-        self.keep_label.setContentsMargins(0, 3, 0, 0)  # level with the chips' text
-        line.addWidget(self.keep_label, 0, Qt.AlignmentFlag.AlignTop)
-        self.chips_widget = QWidget(self)
-        self.chips_widget.setObjectName("tag_field_chips")
-        self._chips = _FlowLayout(self.chips_widget, spacing=4)
-        line.addWidget(self.chips_widget, 1)
-        self.add_button = QPushButton("+ Add field", self)
-        self.add_button.setObjectName("tag_add_field_button")
-        self.add_button.setAutoDefault(False)
-        self.add_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.add_button.setAccessibleName("Add a field to keep on cards tagged %s" % tag)
-        self.add_button.setToolTip("Also keep a field on the cards that have this tag")
-        self.add_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        line.addWidget(self.add_button, 0, Qt.AlignmentFlag.AlignTop)
-        outer.addLayout(line)
-
-        picker = QFrame(self)
-        picker.setObjectName("tag_field_picker")
-        self.picker = picker
-        pl = QVBoxLayout(picker)
-        pl.setContentsMargins(10, 8, 10, 8)
-        pl.setSpacing(6)
-        row = QHBoxLayout()
-        row.setSpacing(6)
-        self.search = QLineEdit(picker)
-        self.search.setObjectName("tag_field_search")
-        self.search.setPlaceholderText("Start typing a field name…")
-        self.search.setAccessibleName("Search fields to keep on cards tagged %s" % tag)
-        self.search.setAccessibleDescription(
-            "Type to narrow the list. Up and Down move through the list, "
-            "Enter adds the highlighted field, or click a field to add it."
+        table = QWidget(self)
+        table.setObjectName("tag_table")
+        tl = QVBoxLayout(table)
+        # Indented under the tag's name (past the arrowhead).
+        tl.setContentsMargins(28, 2, 0, 8)
+        tl.setSpacing(4)
+        self.rows_frame = QFrame(table)
+        self.rows_frame.setObjectName("tag_field_rows")
+        self._rows_layout = QVBoxLayout(self.rows_frame)
+        self._rows_layout.setContentsMargins(1, 3, 1, 3)
+        self._rows_layout.setSpacing(0)
+        tl.addWidget(self.rows_frame)
+        self.keep_all_box = QCheckBox(KEEP_EVERY_FIELD_LABEL, table)
+        self.keep_all_box.setObjectName("tag_keep_all")
+        self.keep_all_box.setAccessibleName("Keep every field on cards tagged %s" % tag)
+        self.keep_all_box.setToolTip(
+            "Every field the card already has keeps your text; a field new to the card takes the update's"
         )
-        self.search.setClearButtonEnabled(True)
-        row.addWidget(self.search, 1)
-        self.done_button = QPushButton("Done", picker)
-        self.done_button.setObjectName("tag_field_done_button")
-        self.done_button.setAutoDefault(False)
-        row.addWidget(self.done_button)
-        pl.addLayout(row)
-        self.match_list = QListWidget(picker)
-        self.match_list.setObjectName("tag_field_matches")
-        self.match_list.setAccessibleName("Fields you can keep on cards tagged %s" % tag)
-        self.match_list.setToolTip("Click a field to add it")
-        self.match_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        pl.addWidget(self.match_list)
-        self.hint = _plain(QLabel(picker))
-        self.hint.setObjectName("tag_field_hint")
-        self.hint.setWordWrap(True)
-        self.hint.setStyleSheet("color: %s;" % _css(colors.muted))
-        self.hint.hide()
-        pl.addWidget(self.hint)
-        picker.hide()
-        outer.addWidget(picker)
-        self.refresh()
+        tl.addWidget(self.keep_all_box)
+        table.hide()
+        self.table = table
+        outer.addWidget(table)
+        self._show_expanded(False)
 
-    def chips(self) -> List[_TagFieldChip]:
-        out = []
-        for i in range(self._chips.count()):
-            w = self._chips.itemAt(i).widget()
-            if isinstance(w, _TagFieldChip):
-                out.append(w)
-        return out
+    # ----- view --------------------------------------------------------
 
-    def chip_for(self, name: str) -> Optional[_TagFieldChip]:
+    def is_expanded(self) -> bool:
+        return not self.table.isHidden()
+
+    def _show_expanded(self, expanded: bool) -> None:
+        self.table.setVisible(expanded)
+        self.expand_button.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
+        state = "expanded" if expanded else "collapsed"
+        self.expand_button.setAccessibleName("Field choices for %s, %s" % (self.tag, state))
+        self.expand_button.setToolTip(
+            "Hide this tag's field choices" if expanded else "Show this tag's field choices")
+
+    def set_expanded(self, expanded: bool) -> None:
+        self._show_expanded(expanded)
+
+    def set_summary(self, text: str) -> None:
+        self.summary.set_full_text(text)
+
+    def rows(self) -> List[TagFieldRow]:
+        return list(self._rows)
+
+    def row_for(self, name: str) -> Optional[TagFieldRow]:
         key = norm_field(name)
-        for chip in self.chips():
-            if not chip.every and norm_field(chip.name) == key:
-                return chip
+        for row in self._rows:
+            if norm_field(row.name) == key:
+                return row
         return None
 
-    def every_chip(self) -> Optional[_TagFieldChip]:
-        for chip in self.chips():
-            if chip.every:
-                return chip
-        return None
+    def set_rows(self, rows: Sequence[Tuple[str, bool]]) -> List[TagFieldRow]:
+        """Replace the table's rows with (field name, kept) pairs."""
+        for row in self._rows:
+            row.hide()
+            self._rows_layout.removeWidget(row)
+            row.setParent(None)
+            row.deleteLater()
+        self._rows = []
+        for name, keep in rows:
+            row = TagFieldRow(name, self.tag, keep, self._colors, self.rows_frame)
+            self._rows_layout.addWidget(row)
+            self._rows.append(row)
+        self.rows_frame.setVisible(bool(self._rows))
+        return list(self._rows)
 
-    def rule(self) -> Optional[TagRule]:
-        if self.keep_all:
-            return TagRule(self.tag, (), True)
-        if self.fields:
-            return TagRule(self.tag, tuple(self.fields), False)
-        return None
+    def show_keep_all(self, keep_all: bool, fields: Iterable[str]) -> None:
+        """Ticked: every row shows as kept and is disabled. Unticked: the
+        rows show the tag's own fields."""
+        kept = {norm_field(f) for f in fields}
+        self.keep_all_box.blockSignals(True)
+        self.keep_all_box.setChecked(keep_all)
+        self.keep_all_box.blockSignals(False)
+        for row in self._rows:
+            row.toggle.blockSignals(True)
+            row.toggle.set_keep(keep_all or norm_field(row.name) in kept)
+            row.toggle._restyle()
+            row.toggle.blockSignals(False)
+            row.toggle.setEnabled(not keep_all)
 
-    def refresh(self) -> None:
-        """Show `fields` / `keep_all` as chips."""
-        while self._chips.count():
-            item = self._chips.takeAt(0)
-            w = item.widget() if item is not None else None
-            if w is not None:
-                w.hide()
-                w.setParent(None)
-                w.deleteLater()
-        names = [EVERY_FIELD_LABEL] if self.keep_all else list(self.fields)
-        for name in names:
-            chip = _TagFieldChip(name, self.tag, self.keep_all, self.chips_widget)
-            chip.remove_requested.connect(self._chip_removed)
-            self._chips.addWidget(chip)
-            chip.show()
-        # The (possibly empty) chips area always takes the free width, so
-        # "+ Add field" stays at the right edge.
-        self.keep_label.setText(TAG_KEEP_TEXT if names else TAG_ONLY_TEXT)
-        # Nothing more to add once every field is kept: remove that chip first.
-        self.add_button.setVisible(not self.keep_all)
-        self._chips.invalidate()
-
-    def _chip_removed(self, name: str) -> None:
-        self.remove_field_requested.emit(self.tag, "" if self.keep_all else name)
+    def eventFilter(self, obj: Any, event: Any) -> bool:  # noqa: N802
+        # A click anywhere on the tag's line (not only the arrowhead) opens
+        # or closes its table.
+        if obj is self.header and event.type() == QEvent.Type.MouseButtonRelease:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.toggle_requested.emit(self.tag)
+                return True
+        return super().eventFilter(obj, event)
 
 
 # Earlier name of the class (a protected tag used to be a chip).
@@ -778,6 +836,15 @@ TagChip = TagBlock
 
 # ---------------------------------------------------------------------------
 # The dialog
+
+
+def _layout_height(lay: QLayout, width: int) -> int:
+    """The height `lay` needs at `width`: its height-for-width when some
+    item wraps, else its size hint (Qt answers -1 when nothing wraps)."""
+    height = lay.totalHeightForWidth(width)
+    if height < 0:
+        height = lay.totalSizeHint().height()
+    return height
 
 
 class SettingsDialog(QDialog):
@@ -798,11 +865,14 @@ class SettingsDialog(QDialog):
         self._colors = _Colors(self.palette())
         self._rows: List[FieldRow] = []
         self._tags: List[str] = []
-        # Rule 14, per protected tag (by `norm_tag`): the fields also kept on
-        # its cards, and whether every field is.
+        # Rule 14, per protected tag (by `norm_tag`): its own frozen table
+        # (the fields kept on its cards) and whether every field is kept.
         self._tag_fields: Dict[str, List[str]] = {}
         self._tag_all: Dict[str, bool] = {}
         self._blocks: List[TagBlock] = []
+        self._open_tag: Optional[str] = None  # `norm_tag` of the expanded tag
+        self._applying = False
+        self.info_buttons: Dict[str, InfoButton] = {}
         self._tag_matches: List[str] = []
         self._field_matches: List[str] = []
         self._result: Optional[Settings] = None
@@ -849,48 +919,41 @@ class SettingsDialog(QDialog):
         c = self._colors
         self.setStyleSheet(
             """
-            QFrame#field_rows, QFrame#field_picker, QFrame#tag_field_picker {
+            QFrame#field_rows, QFrame#field_picker {
                 border: 1px solid %(border)s; border-radius: 8px;
             }
-            QFrame#field_rows QLabel, QFrame#field_picker QLabel,
-            QFrame#tag_field_picker QLabel { border: none; }
-            QFrame#tag_block { border: none; border-top: 1px solid %(soft)s; }
+            QFrame#field_rows QLabel, QFrame#field_picker QLabel { border: none; }
+            QFrame#tag_block { border: none; }
             QFrame#tag_block QLabel { border: none; background: transparent; }
-            QFrame#tag_field_chip {
-                border: 1px solid %(border)s; border-radius: 6px; background: %(chip)s;
-            }
+            QFrame#tag_field_rows { border: 1px solid %(soft)s; border-radius: 6px; }
+            QFrame#tag_field_rows QLabel { border: none; }
             QFrame#row_separator { border: none; border-top: 1px solid %(soft)s; }
-            QFrame#tag_chip {
-                border: 1px solid %(border)s; border-radius: 6px; background: %(chip)s;
-            }
-            QFrame#tag_chip QLabel { border: none; background: transparent; }
             QToolButton#remove_field_button, QToolButton#remove_tag_button,
-            QToolButton#remove_tag_field_button {
+            QToolButton#tag_expand_button {
                 border: 1px solid transparent; border-radius: 4px; padding: 1px 4px;
                 color: %(muted)s; background: transparent;
             }
             QToolButton#remove_field_button:hover, QToolButton#remove_tag_button:hover,
-            QToolButton#remove_tag_field_button:hover {
+            QToolButton#tag_expand_button:hover {
                 border-color: %(border)s;
             }
             QToolButton#remove_field_button:focus, QToolButton#remove_tag_button:focus,
-            QToolButton#remove_tag_field_button:focus {
+            QToolButton#tag_expand_button:focus {
                 border: 1px solid %(focus)s;
             }
+            QToolButton#info_button {
+                border: 1px solid %(muted)s; border-radius: %(info_r)dpx; padding: 0;
+                color: %(muted)s; background: transparent; font-weight: 600;
+            }
+            QToolButton#info_button:hover { border-color: %(text)s; color: %(text)s; }
+            QToolButton#info_button:focus { border: 2px solid %(focus)s; color: %(text)s; }
             QPushButton#add_field_button {
                 border: 1px dashed %(border)s; border-radius: 6px; padding: 5px 10px;
                 color: %(text)s; background: transparent;
             }
             QPushButton#add_field_button:focus { border: 1px solid %(focus)s; }
-            QPushButton#tag_add_field_button {
-                border: 1px dashed %(border)s; border-radius: 6px; padding: 2px 8px;
-                color: %(text)s; background: transparent;
-            }
-            QPushButton#tag_add_field_button:focus { border: 1px solid %(focus)s; }
-            QListWidget#tag_list::item, QListWidget#field_matches::item,
-            QListWidget#tag_field_matches::item { padding: 3px 6px; }
-            QListWidget#tag_list::item:selected, QListWidget#field_matches::item:selected,
-            QListWidget#tag_field_matches::item:selected {
+            QListWidget#tag_list::item, QListWidget#field_matches::item { padding: 3px 6px; }
+            QListWidget#tag_list::item:selected, QListWidget#field_matches::item:selected {
                 background: %(accent)s; color: %(on)s;
             }
             QPushButton#save_button {
@@ -903,13 +966,13 @@ class SettingsDialog(QDialog):
             % {
                 "border": _css(c.border),
                 "soft": _css(c.border_soft),
-                "chip": _css(c.chip_bg),
                 "muted": _css(c.muted),
                 "focus": _css(c.focus),
                 "text": _css(c.text),
                 "accent": ACCENT_COLOR,
                 "accent_dark": _css(c.accent.darker(125)),
                 "on": ON_TEXT,
+                "info_r": max(18, self.fontMetrics().height() + 2) // 2,
             }
         )
 
@@ -938,9 +1001,9 @@ class SettingsDialog(QDialog):
         switches.setSpacing(12)
         switches.addLayout(self._build_styling_section())
         self.scheduling_switch, row = self._switch_row(
-            SCHEDULING_HEADING, SCHEDULING_HELP, "scheduling_switch")
+            SCHEDULING_HEADING, SCHEDULING_INFO, "scheduling_switch")
         switches.addLayout(row)
-        self.presets_switch, row = self._switch_row(PRESETS_HEADING, PRESETS_HELP, "presets_switch")
+        self.presets_switch, row = self._switch_row(PRESETS_HEADING, PRESETS_INFO, "presets_switch")
         switches.addLayout(row)
         lay.addLayout(switches)
         lay.addStretch(1)
@@ -978,8 +1041,7 @@ class SettingsDialog(QDialog):
     def _build_fields_section(self) -> QVBoxLayout:
         sec = QVBoxLayout()
         sec.setSpacing(8)
-        sec.addWidget(self._heading(FIELDS_HEADING))
-        sec.addWidget(self._muted_label(FIELDS_HELP))
+        sec.addLayout(self._heading_row(FIELDS_HEADING, self._info(FIELDS_HEADING, FIELDS_INFO, "fields")))
 
         self.field_rows_frame = QFrame(self)
         self.field_rows_frame.setObjectName("field_rows")
@@ -1046,17 +1108,7 @@ class SettingsDialog(QDialog):
     def _build_tags_section(self) -> QVBoxLayout:
         sec = QVBoxLayout()
         sec.setSpacing(8)
-        sec.addWidget(self._heading(TAGS_HEADING))
-        sec.addWidget(self._muted_label(TAGS_HELP, "tags_help"))
-
-        self.tag_chips_widget = QWidget(self)
-        self.tag_chips_widget.setObjectName("tag_chips")
-        self._chips_layout = QVBoxLayout(self.tag_chips_widget)
-        self._chips_layout.setContentsMargins(0, 0, 0, 0)
-        self._chips_layout.setSpacing(0)
-        sec.addWidget(self.tag_chips_widget)
-        self.no_tags_label = self._muted_label("No protected tags yet.", "no_tags_label")
-        sec.addWidget(self.no_tags_label)
+        sec.addLayout(self._heading_row(TAGS_HEADING, self._info(TAGS_HEADING, TAGS_INFO, "tags")))
 
         line = QHBoxLayout()
         line.setSpacing(6)
@@ -1086,6 +1138,15 @@ class SettingsDialog(QDialog):
         self.tag_hint.setAccessibleName("Tag hint")
         self.tag_hint.hide()
         sec.addWidget(self.tag_hint)
+
+        # One line per protected tag, under the tag box.
+        self.tag_chips_widget = QWidget(self)
+        self.tag_chips_widget.setObjectName("tag_blocks")
+        self._chips_layout = QVBoxLayout(self.tag_chips_widget)
+        self._chips_layout.setContentsMargins(0, 0, 0, 0)
+        self._chips_layout.setSpacing(0)
+        self.tag_chips_widget.hide()
+        sec.addWidget(self.tag_chips_widget)
         return sec
 
     def _setup_list(self, lst: QListWidget) -> None:
@@ -1107,18 +1168,31 @@ class SettingsDialog(QDialog):
             lst.addItem(item)
 
     def _build_styling_section(self) -> QHBoxLayout:
-        self.styling_switch, row = self._switch_row(STYLING_HEADING, STYLING_HELP, "styling_switch")
+        self.styling_switch, row = self._switch_row(STYLING_HEADING, STYLING_INFO, "styling_switch")
         return row
 
-    def _switch_row(self, heading: str, help_text: str, name: str) -> Tuple[ToggleSwitch, QHBoxLayout]:
-        """A heading, a muted help line and a switch on the right."""
+    def _info(self, topic: str, text: str, name: str) -> InfoButton:
+        button = InfoButton(topic, text, self)
+        self.info_buttons[name] = button
+        return button
+
+    def _heading_row(self, heading: str, info: InfoButton) -> QHBoxLayout:
+        """A heading followed by its (i) button."""
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        lab = self._heading(heading)
+        lab.setWordWrap(False)
+        row.addWidget(lab, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(info, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addStretch(1)
+        return row
+
+    def _switch_row(self, heading: str, info_text: str, name: str) -> Tuple[ToggleSwitch, QHBoxLayout]:
+        """A heading with its (i) button, and a switch on the right."""
         row = QHBoxLayout()
         row.setSpacing(12)
-        text = QVBoxLayout()
-        text.setSpacing(2)
-        text.addWidget(self._heading(heading))
-        text.addWidget(self._muted_label(help_text))
-        row.addLayout(text, 1)
+        info = self._info(heading, info_text, name.replace("_switch", ""))
+        row.addLayout(self._heading_row(heading, info), 1)
         switch = ToggleSwitch(self._colors, self)
         switch.setObjectName(name)
         switch.setAccessibleName(heading)
@@ -1146,7 +1220,7 @@ class SettingsDialog(QDialog):
         # Inner boxes first, so no cached height is stale (a row just added).
         boxes: List[QWidget] = [self.field_rows_frame, self.field_picker]
         for block in self._blocks:
-            boxes += [block.chips_widget, block.picker, block]
+            boxes += [block.rows_frame, block.table, block.header, block]
         boxes.append(self.tag_chips_widget)
         for box in boxes:
             box.layout().invalidate()
@@ -1159,7 +1233,7 @@ class SettingsDialog(QDialog):
         # width, and a few spare pixels go to the stretch at the bottom.
         bar = self.scroll.verticalScrollBar().sizeHint().width()
         width = max(1, self.scroll.width() - bar)
-        want = lay.totalHeightForWidth(width) + (self.height() - self.scroll.height())
+        want = _layout_height(lay, width) + (self.height() - self.scroll.height())
         cap = want
         screen = self.screen() if hasattr(self, "screen") else None
         if screen is not None:
@@ -1184,7 +1258,7 @@ class SettingsDialog(QDialog):
     def _size_to_content(self) -> None:
         self.body.adjustSize()
         width = 600
-        height = self.body.layout().totalHeightForWidth(width) + 70
+        height = _layout_height(self.body.layout(), width) + 70
         screen = self.screen() if hasattr(self, "screen") else None
         if screen is not None:
             height = min(height, int(screen.availableGeometry().height() * 0.9))
@@ -1194,19 +1268,37 @@ class SettingsDialog(QDialog):
     # ----- state ------------------------------------------------------------
 
     def _apply_settings(self, settings: Settings) -> None:
+        self._applying = True
+        try:
+            self._apply(settings)
+        finally:
+            self._applying = False
+        self._tag_tab_order()
+
+    def _apply(self, settings: Settings) -> None:
         for row in list(self._rows):
             self._drop_row(row)
         for fc in settings.fields:
             self._append_row(fc.name, fc.keep)
         self._show_rows_or_empty_note()
-        self._tags = list(settings.protected_tags)
+        # Every tag is shown (and saved) with its own frozen table; a tag
+        # saved by an earlier beta is frozen at what it means now.
+        frozen = settings.with_frozen_tags()
+        self._tags = []
         self._tag_fields = {}
         self._tag_all = {}
-        for tag in self._tags:
-            rule = settings.rule_for(tag)
+        for tag in frozen.protected_tags:
             key = norm_tag(tag)
+            if not key or key in self._tag_fields:
+                continue
+            rule = frozen.rule_for(tag)
+            self._tags.append(tag)
             self._tag_all[key] = bool(rule and rule.keep_all)
-            self._tag_fields[key] = [] if (rule is None or rule.keep_all) else list(rule.keep_fields)
+            self._tag_fields[key] = list(rule.fields or ()) if rule is not None else []
+        self._open_tag = None  # all collapsed when the window opens
+        self._tags, tags = [], self._tags
+        self._rebuild_chips()  # drop every block: the data may differ
+        self._tags = tags
         self._rebuild_chips()
         self.styling_switch.setChecked(bool(settings.update_note_types))
         self.scheduling_switch.setChecked(bool(settings.import_scheduling))
@@ -1225,10 +1317,7 @@ class SettingsDialog(QDialog):
         rules = []
         for tag in self._tags:
             key = norm_tag(tag)
-            if self._tag_all.get(key):
-                rules.append(TagRule(tag, (), True))
-            elif self._tag_fields.get(key):
-                rules.append(TagRule(tag, tuple(self._tag_fields[key]), False))
+            rules.append(TagRule(tag, (), bool(self._tag_all.get(key)), tuple(self._ordered_tag_fields(key))))
         return Settings(
             fields=tuple(r.choice() for r in self._rows),
             protected_tags=tuple(self._tags),
@@ -1280,6 +1369,8 @@ class SettingsDialog(QDialog):
         self._rows_layout.addWidget(row)
         self._rows.append(row)
         self._show_rows_or_empty_note()
+        # A new row shows in every tag's table ("Take the update's" there).
+        self._refresh_tag_tables()
         return row
 
     def _show_rows_or_empty_note(self) -> None:
@@ -1300,12 +1391,15 @@ class SettingsDialog(QDialog):
             w.setParent(None)
             w.deleteLater()
         self._show_rows_or_empty_note()
+        # The row leaves every tag's table that does not keep it.
+        self._refresh_tag_tables()
 
     def remove_field(self, name: str) -> bool:
         row = self.row_for(name)
         if row is None:
             return False
         self._drop_row(row)
+        self._tag_tab_order()
         self._refresh_field_matches()
         self.add_field_button.setFocus()
         return True
@@ -1370,6 +1464,7 @@ class SettingsDialog(QDialog):
             return False
         spelled = known[key]
         self._append_row(spelled, False)
+        self._tag_tab_order()
         self.field_search.blockSignals(True)
         self.field_search.clear()
         self.field_search.blockSignals(False)
@@ -1416,48 +1511,68 @@ class SettingsDialog(QDialog):
         return list(self._tag_matches)
 
     def _rebuild_chips(self) -> None:
-        """One block per protected tag (all rebuilt: tags are few)."""
-        for block in self._blocks:
+        """One block per protected tag, in order. Blocks of tags still
+        protected are kept as they are (open or not, focus included); new
+        tags get a new block, removed tags lose theirs."""
+        old = {norm_tag(b.tag): b for b in self._blocks}
+        blocks: List[TagBlock] = []
+        for tag in self._tags:
+            block = old.pop(norm_tag(tag), None)
+            if block is None:
+                block = TagBlock(tag, self._colors, self.tag_chips_widget)
+                block.remove_requested.connect(self.remove_tag)
+                block.toggle_requested.connect(self.toggle_tag)
+                block.keep_all_box.toggled.connect(lambda on, t=tag: self.set_tag_keep_all(t, on))
+                self._fill_tag_table(block)
+            blocks.append(block)
+        for block in old.values():
             block.hide()
             self._chips_layout.removeWidget(block)
             block.setParent(None)
             block.deleteLater()
-        self._blocks = []
-        for i, tag in enumerate(self._tags):
-            block = TagBlock(tag, self._colors, self.tag_chips_widget)
-            if i == 0:
-                block.setStyleSheet("QFrame#tag_block { border-top: none; }")
-            key = norm_tag(tag)
-            block.fields = list(self._tag_fields.get(key, []))
-            block.keep_all = bool(self._tag_all.get(key))
-            block.refresh()
-            block.remove_requested.connect(self.remove_tag)
-            block.remove_field_requested.connect(self.remove_tag_field)
-            block.add_button.clicked.connect(lambda _=False, t=tag: self.open_tag_field_picker(t))
-            block.done_button.clicked.connect(lambda _=False, t=tag: self.close_tag_field_picker(t))
-            block.search.textChanged.connect(lambda _text, t=tag: self._refresh_tag_field_matches(t))
-            block.match_list.itemClicked.connect(lambda item, t=tag: self._tag_field_clicked(t, item))
-            self._setup_list(block.match_list)
-            for w in (block.search, block.match_list):
-                w.installEventFilter(self)
+        for block in blocks:
+            self._chips_layout.removeWidget(block)
+        # The tags line up in one column, as wide as the longest tag needs
+        # (long ones are elided in the middle, tooltip in full).
+        bold = QFont(self.font())
+        bold.setWeight(QFont.Weight.DemiBold)
+        fm = QFontMetrics(bold)
+        column = min(TAG_COLUMN_WIDTH, max([fm.horizontalAdvance(t) + 8 for t in self._tags] or [0]))
+        for block in blocks:
+            # Fixed, not the label's own "Ignored": an ignored item gets no
+            # room in the line, and the summary would be drawn over it.
+            block.label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+            block.label.setFixedWidth(column)
             self._chips_layout.addWidget(block)
-            self._blocks.append(block)
+            block.set_expanded(norm_tag(block.tag) == self._open_tag)
             block.show()
+        self._blocks = blocks
         self.tag_chips_widget.setVisible(bool(self._tags))
-        self.no_tags_label.setVisible(not self._tags)
         self._chips_layout.invalidate()
         self._tag_tab_order()
 
     def _tag_tab_order(self) -> None:
-        """Tab goes through each block (its ✕, its field chips' ✕, its
-        "+ Add field", its open picker) and then to the tag box. Hidden
-        widgets are skipped by Qt."""
-        chain: List[QWidget] = [self.field_matches]
+        """The whole window's Tab order, top to bottom (rows and tag lines are
+        made after the rest, so Qt alone would put them last): the Fields
+        (i), each field row (its ✕, its toggle), "+ Add field" and its
+        search; the Protected tags (i), the tag box and its list, each tag's
+        line (its arrowhead, its ✕, and, when open, its table's toggles and
+        "Keep every field"); then each switch's (i) and switch, and the
+        buttons. Hidden widgets are skipped by Qt."""
+        chain: List[QWidget] = [self.info_buttons["fields"]]
+        for row in self._rows:
+            chain += [row.remove_button, row.toggle.keep_button, row.toggle.take_button]
+        chain += [self.add_field_button, self.field_search, self.field_done_button, self.field_matches]
+        chain += [self.info_buttons["tags"], self.tag_input, self.tag_list]
         for block in self._blocks:
-            chain.append(block.remove_button)
-            chain.extend(chip.remove_button for chip in block.chips())
-            chain += [block.add_button, block.search, block.done_button, block.match_list]
-        chain.append(self.tag_input)
+            chain += [block.expand_button, block.remove_button]
+            for trow in block.rows():
+                chain += [trow.toggle.keep_button, trow.toggle.take_button]
+            chain.append(block.keep_all_box)
+        for name, switch in (("styling", self.styling_switch), ("scheduling", self.scheduling_switch),
+                             ("presets", self.presets_switch)):
+            chain += [self.info_buttons[name], switch]
+        chain += [self.restore_button, self.cancel_button, self.save_button]
         for a, b in zip(chain, chain[1:]):
             QWidget.setTabOrder(a, b)
 
@@ -1519,7 +1634,10 @@ class SettingsDialog(QDialog):
             self.tag_input.setFocus()
 
     def add_tag(self, tag: str) -> bool:
-        """Protect `tag` if it exists in the collection; returns True if added."""
+        """Protect `tag` if it exists in the collection; returns True if added.
+        Its table starts as the previous tag's kept fields plus every field
+        the main list keeps now ("Keep every field" copied from that tag; the
+        first tag starts as the main list), and it opens, closing any other."""
         key = norm_tag(tag)
         existing = None
         for t in self._all_tags:
@@ -1534,9 +1652,21 @@ class SettingsDialog(QDialog):
         if self._is_protected(existing):
             self._set_tag_hint('"%s" is already protected.' % existing)
             return False
+        fields: List[str] = []
+        keep_all = False
+        if self._tags:
+            prev = norm_tag(self._tags[-1])
+            fields = list(self._tag_fields.get(prev, []))
+            keep_all = bool(self._tag_all.get(prev))
+        have = {norm_field(f) for f in fields}
+        for row in self._rows:
+            if row.toggle.keep() and norm_field(row.name) not in have:
+                have.add(norm_field(row.name))
+                fields.append(row.name)
         self._tags.append(existing)
-        self._tag_fields[norm_tag(existing)] = []
-        self._tag_all[norm_tag(existing)] = False
+        self._tag_fields[norm_tag(existing)] = fields
+        self._tag_all[norm_tag(existing)] = keep_all
+        self._open_tag = norm_tag(existing)
         self._rebuild_chips()
         self.tag_input.blockSignals(True)
         self.tag_input.clear()
@@ -1566,7 +1696,7 @@ class SettingsDialog(QDialog):
         return False
 
     def remove_tag(self, tag: str) -> bool:
-        """Stop protecting `tag`; its fields go with it."""
+        """Stop protecting `tag`; its table goes with it."""
         key = norm_tag(tag)
         before = len(self._tags)
         self._tags = [t for t in self._tags if norm_tag(t) != key]
@@ -1574,6 +1704,8 @@ class SettingsDialog(QDialog):
             return False
         self._tag_fields.pop(key, None)
         self._tag_all.pop(key, None)
+        if self._open_tag == key:
+            self._open_tag = None
         self._rebuild_chips()
         self._refresh_tag_matches()
         self.tag_input.setFocus()
@@ -1592,174 +1724,124 @@ class SettingsDialog(QDialog):
         lst.setCurrentRow(new)
         lst.scrollToItem(lst.item(new))
 
-    # ----- fields kept per protected tag (rule 14) ----------------------------
+    # ----- each protected tag's own table (rule 14) ----------------------------
 
     def tag_rule(self, tag: str) -> Tuple[List[str], bool]:
-        """(fields kept on the cards with `tag`, every field?) as shown."""
+        """(fields the tag keeps, in display order; every field?) as shown."""
         key = norm_tag(tag)
-        return list(self._tag_fields.get(key, [])), bool(self._tag_all.get(key))
+        return self._ordered_tag_fields(key), bool(self._tag_all.get(key))
 
-    def _tag_field_candidates(self, tag: str) -> List[str]:
-        """The tag picker's list for the text typed: "Every field" first
-        (when it matches), then the user's field names not yet on the tag;
-        fields the main list already keeps everywhere come last."""
-        block = self.tag_block(tag)
-        query = block.search.text() if block is not None else ""
-        names = filter_fields(query, self._all_fields, self._tag_fields.get(norm_tag(tag), []))
-        everywhere = {norm_field(r.name) for r in self._rows if r.toggle.keep()}
-        names = [n for n in names if norm_field(n) not in everywhere] + [
-            n for n in names if norm_field(n) in everywhere]
-        q = query.strip().casefold()
-        if not q or q in EVERY_FIELD_LABEL.casefold():
-            names.insert(0, EVERY_FIELD_LABEL)
-        return names
-
-    def open_tag_field_picker(self, tag: str) -> None:
-        """Open the field search under `tag` (closing any other tag's)."""
-        block = self.tag_block(tag)
-        if block is None:
-            return
-        for other in self._blocks:
-            if other is not block and other.picker.isVisible():
-                self.close_tag_field_picker(other.tag)
-        block.add_button.hide()
-        block.picker.show()
-        block.search.blockSignals(True)
-        block.search.clear()
-        block.search.blockSignals(False)
-        self._refresh_tag_field_matches(tag)
-        block.search.setFocus()
-        self._fit_height()
-
-    def close_tag_field_picker(self, tag: str) -> None:
-        block = self.tag_block(tag)
-        if block is None:
-            return
-        focus = QApplication.focusWidget()
-        had_focus = bool(focus) and block.picker.isAncestorOf(focus)
-        block.picker.hide()
-        block.search.blockSignals(True)
-        block.search.clear()
-        block.search.blockSignals(False)
-        self._set_tag_field_hint(block, "")
-        block.add_button.setVisible(not block.keep_all)
-        if had_focus:
-            (block.add_button if block.add_button.isVisible() else block.remove_button).setFocus()
-        self._fit_height()
-
-    def _refresh_tag_field_matches(self, tag: str) -> None:
-        block = self.tag_block(tag)
-        if block is None:
-            return
-        query = block.search.text()
-        block.matches = self._tag_field_candidates(tag)
-        self._fill_list(block.match_list, block.matches)
-        if block.matches and block.matches[0] == EVERY_FIELD_LABEL:
-            block.match_list.item(0).setData(Qt.ItemDataRole.UserRole, "every")
-        # The first match is highlighted once the user types, ready for Enter.
-        if block.matches and query.strip():
-            block.match_list.setCurrentRow(0)
-        self._fit_list(block.match_list, 6)
-        block.match_list.setVisible(bool(block.matches))
-        if block.matches:
-            self._set_tag_field_hint(block, "")
-        elif query.strip() and norm_field(query) in {norm_field(n) for n in self._tag_fields.get(norm_tag(tag), [])}:
-            self._set_tag_field_hint(block, '"%s" is already kept on these cards.' % query.strip())
-        else:
-            self._set_tag_field_hint(block, "No other fields in your note types match.")
-        self._fit_height()
-
-    def _set_tag_field_hint(self, block: TagBlock, text: str) -> None:
-        block.hint.setText(text)
-        block.hint.setVisible(bool(text))
-
-    def _tag_field_clicked(self, tag: str, item: QListWidgetItem) -> None:
-        every = item.data(Qt.ItemDataRole.UserRole) == "every"
-        self.add_tag_field(tag, item.text(), every=every)
-
-    def _tag_field_enter(self, tag: str) -> None:
-        block = self.tag_block(tag)
-        if block is None:
-            return
-        item = block.match_list.currentItem()
-        if item is not None and item.isSelected():
-            self._tag_field_clicked(tag, item)
-        elif block.matches:
-            self._set_tag_field_hint(block, "Keep typing, or pick a field in the list.")
-        else:
-            self._set_tag_field_hint(block, "Only fields from your note types can be added.")
-
-    def add_tag_field(self, tag: str, name: str, every: bool = False) -> bool:
-        """Also keep field `name` on the cards that have `tag` (one of the
-        user's field names); `every=True` keeps every field instead, which
-        replaces the tag's field list. Nothing is said after adding."""
-        block = self.tag_block(tag)
-        if block is None:
-            return False
-        key = norm_tag(tag)
-        if every:
-            self._tag_all[key] = True
-            self._tag_fields[key] = []
-            block.keep_all, block.fields = True, []
-            block.refresh()
-            self.close_tag_field_picker(tag)
-            block.remove_button.setFocus()
-            self._tag_tab_order()
-            self._fit_height()
-            return True
-        known = {norm_field(n): n for n in reversed(self._all_fields)}
-        fkey = norm_field(name)
-        if fkey not in known:
-            self._set_tag_field_hint(block, "Only fields from your note types can be added.")
-            return False
-        fields = self._tag_fields.setdefault(key, [])
-        if any(norm_field(f) == fkey for f in fields):
-            self._set_tag_field_hint(block, '"%s" is already kept on these cards.' % known[fkey])
-            return False
-        fields.append(known[fkey])
-        self._tag_all[key] = False
-        block.keep_all, block.fields = False, list(fields)
-        block.refresh()
-        block.search.blockSignals(True)
-        block.search.clear()
-        block.search.blockSignals(False)
-        self._refresh_tag_field_matches(tag)
-        block.search.setFocus()
-        self._tag_tab_order()
-        return True
-
-    def remove_tag_field(self, tag: str, name: str) -> bool:
-        """One click on a field chip's ✕: stop keeping `name` on the tag's
-        cards ("" or "Every field" on the "Every field" chip: back to the
-        tag's field list being empty)."""
-        block = self.tag_block(tag)
-        if block is None:
-            return False
-        key = norm_tag(tag)
-        if self._tag_all.get(key) and (not name or name == EVERY_FIELD_LABEL):
-            self._tag_all[key] = False
-        else:
-            fields = self._tag_fields.get(key, [])
-            left = [f for f in fields if norm_field(f) != norm_field(name)]
-            if len(left) == len(fields):
-                return False
-            self._tag_fields[key] = left
-        block.keep_all, block.fields = bool(self._tag_all.get(key)), list(self._tag_fields.get(key, []))
-        block.refresh()
-        if block.picker.isVisible():
-            self._refresh_tag_field_matches(tag)
-            block.search.setFocus()
-        else:
-            block.add_button.setFocus()
-        self._tag_tab_order()
-        self._fit_height()
-        return True
-
-    def _block_of(self, obj: Any) -> Optional[TagBlock]:
+    def open_tag(self) -> Optional[str]:
+        """The tag whose table is open, or None."""
         for block in self._blocks:
-            if obj is block.search or obj is block.match_list:
-                return block
+            if block.is_expanded():
+                return block.tag
         return None
+
+    def _ordered_tag_fields(self, key: str) -> List[str]:
+        """A tag's kept fields in the main list's order, then any it keeps
+        that are no longer in the main list (in the order they were kept)."""
+        fields = self._tag_fields.get(key, [])
+        kept = {norm_field(f): f for f in fields}
+        out = [r.name for r in self._rows if norm_field(r.name) in kept]
+        listed = {norm_field(r.name) for r in self._rows}
+        out += [f for f in fields if norm_field(f) not in listed]
+        return out
+
+    def _fill_tag_table(self, block: TagBlock) -> None:
+        """The tag's rows: the main list's rows, in order, then the fields
+        it keeps that are no longer in the main list."""
+        key = norm_tag(block.tag)
+        kept = {norm_field(f) for f in self._tag_fields.get(key, [])}
+        rows = [(r.name, norm_field(r.name) in kept) for r in self._rows]
+        listed = {norm_field(r.name) for r in self._rows}
+        rows += [(f, True) for f in self._tag_fields.get(key, []) if norm_field(f) not in listed]
+        for row in block.set_rows(rows):
+            row.toggle.changed.connect(lambda keep, t=block.tag, n=row.name: self.set_tag_field(t, n, keep))
+        block.show_keep_all(bool(self._tag_all.get(key)), self._tag_fields.get(key, []))
+        block.set_summary(keeps_text(self._ordered_tag_fields(key), bool(self._tag_all.get(key))))
+
+    def _refresh_tag_tables(self) -> None:
+        """After a main-list row was added or removed."""
+        if not self._blocks or self._applying:
+            return
+        for block in self._blocks:
+            self._fill_tag_table(block)
+        self._tag_tab_order()
+        self._fit_height()
+
+    def toggle_tag(self, tag: str) -> None:
+        block = self.tag_block(tag)
+        if block is None:
+            return
+        if block.is_expanded():
+            self.collapse_tag(tag)
+        else:
+            self.expand_tag(tag)
+
+    def expand_tag(self, tag: str) -> None:
+        """Open `tag`'s table; only one tag is open at a time."""
+        key = norm_tag(tag)
+        if self.tag_block(tag) is None:
+            return
+        self._open_tag = key
+        for block in self._blocks:
+            block.set_expanded(norm_tag(block.tag) == key)
+        self._fit_height()
+
+    def collapse_tag(self, tag: str) -> None:
+        block = self.tag_block(tag)
+        if block is None:
+            return
+        if self._open_tag == norm_tag(tag):
+            self._open_tag = None
+        block.set_expanded(False)
+        self._fit_height()
+
+    def set_tag_field(self, tag: str, name: str, keep: bool) -> bool:
+        """"Keep mine" (`keep`) or "Take the update's" for field `name` in
+        `tag`'s own table. Changes nothing else, the main list included."""
+        block = self.tag_block(tag)
+        if block is None:
+            return False
+        key = norm_tag(tag)
+        fields = self._tag_fields.setdefault(key, [])
+        fkey = norm_field(name)
+        have = any(norm_field(f) == fkey for f in fields)
+        if keep and not have:
+            fields.append(name)
+        elif not keep and have:
+            self._tag_fields[key] = [f for f in fields if norm_field(f) != fkey]
+        else:
+            return False
+        row = block.row_for(name)
+        if row is not None and row.toggle.keep() != keep:
+            row.toggle.set_keep(keep)
+        listed = {norm_field(r.name) for r in self._rows}
+        if not keep and fkey not in listed:
+            # A field no longer in the main list stays in the tag's table
+            # only while the tag keeps it.
+            focus = QApplication.focusWidget()
+            refocus = block.keep_all_box if (row is not None and focus is not None
+                                             and row.toggle.isAncestorOf(focus)) else None
+            self._fill_tag_table(block)
+            self._tag_tab_order()
+            if refocus is not None:
+                refocus.setFocus()
+            self._fit_height()
+        block.set_summary(keeps_text(self._ordered_tag_fields(key), bool(self._tag_all.get(key))))
+        return True
+
+    def set_tag_keep_all(self, tag: str, keep_all: bool) -> None:
+        """"Keep every field" for `tag`: its rows show as kept and are
+        disabled; unticked, they show the tag's own choices again."""
+        block = self.tag_block(tag)
+        if block is None:
+            return
+        key = norm_tag(tag)
+        self._tag_all[key] = bool(keep_all)
+        block.show_keep_all(bool(keep_all), self._tag_fields.get(key, []))
+        block.set_summary(keeps_text(self._ordered_tag_fields(key), bool(keep_all)))
 
     # ----- keyboard ---------------------------------------------------------
 
@@ -1778,20 +1860,6 @@ class SettingsDialog(QDialog):
                 self.tag_input.clear()
                 self._set_tag_hint("")
                 self.tag_input.setFocus()
-                return True
-        block = self._block_of(obj)
-        if block is not None:
-            if key in (Qt.Key.Key_Down, Qt.Key.Key_Up) and obj is block.search:
-                self._move_list_selection(block.match_list, 1 if key == Qt.Key.Key_Down else -1)
-                return True
-            if key in _ENTER_KEYS:
-                self._tag_field_enter(block.tag)
-                return True
-            if key == Qt.Key.Key_Escape:
-                if block.search.text():
-                    block.search.clear()
-                else:
-                    self.close_tag_field_picker(block.tag)
                 return True
         if obj is self.field_search or obj is self.field_matches:
             if key in (Qt.Key.Key_Down, Qt.Key.Key_Up) and obj is self.field_search:

@@ -52,6 +52,7 @@ from .settings_dialog import (
     choices_summary,
     load_settings,
     open_settings,
+    split_tag_summary,
 )
 
 WINDOW_TITLE = ADDON_NAME
@@ -130,6 +131,8 @@ _NOTICE_COLOR = "#C98A12"
 
 _FILE_NAME_WIDTH = 400  # px before a long file name is elided (tooltip has it all)
 _VALUE_WRAP_WIDTH = 300  # px; longer "saved choices" values wrap
+TAGS_ROW_LABEL = "Protected tags"
+_TAGS_MAX_LINES = 3  # the "Protected tags" row shows at most this many lines
 
 
 # ---------------------------------------------------------------------------
@@ -475,6 +478,11 @@ class QuestionDialog(QDialog):
             # and would widen the window: elide it in the middle, like long
             # tags elsewhere; the tooltip has the whole value.
             shown = _elide_long_words(value, val.fontMetrics(), _VALUE_WRAP_WIDTH)
+            if label == TAGS_ROW_LABEL:
+                # At most three lines, then "+N more" (the tooltip has it all).
+                width = self._width - 92 - lab.sizeHint().width()
+                shown = _at_most_lines(split_tag_summary(value), val.fontMetrics(),
+                                       max(_VALUE_WRAP_WIDTH, width), _TAGS_MAX_LINES)
             if shown != value:
                 val.setText(shown)
                 val.setToolTip("<span>%s</span>" % _html_escape(value))
@@ -696,6 +704,28 @@ def _elide_long_words(text: str, fm: QFontMetrics, width: int) -> str:
     out = [fm.elidedText(w, Qt.TextElideMode.ElideMiddle, width) if fm.horizontalAdvance(w) > width else w
            for w in words]
     return " ".join(out)
+
+
+def _line_count(text: str, fm: QFontMetrics, width: int) -> int:
+    rect = fm.boundingRect(QRect(0, 0, width, 100000), int(Qt.TextFlag.TextWordWrap.value), text)
+    return max(1, round(rect.height() / max(1, fm.lineSpacing())))
+
+
+def _at_most_lines(entries: Sequence[str], fm: QFontMetrics, width: int, max_lines: int) -> str:
+    """`entries` joined with ", " as the "Protected tags" row shows them:
+    when that takes more than `max_lines` lines at `width` pixels, as many
+    entries as fit followed by "+N more" (N = the entries left out). A word
+    too long for a line is elided in the middle, as in every row."""
+    def text(n: int) -> str:
+        shown = ", ".join(entries[:n])
+        if n < len(entries):
+            shown = (shown + ", " if shown else "") + "+%d more" % (len(entries) - n)
+        return _elide_long_words(shown, fm, width)
+
+    for n in range(len(entries), 0, -1):
+        if _line_count(text(n), fm, width) <= max_lines:
+            return text(n)
+    return text(0)
 
 
 def _html_escape(text: str) -> str:

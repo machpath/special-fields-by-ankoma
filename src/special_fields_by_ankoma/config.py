@@ -46,14 +46,22 @@ def settings_to_config(settings: Settings) -> Dict[str, Any]:
 
 
 def _tags_to_config(settings: Settings) -> List[Any]:
-    """`protected_tags` as stored: a plain string for a tag that keeps no
-    fields (the format of earlier betas, which can still read it), an object
-    for a tag with a rule (contract rule 14)."""
+    """`protected_tags` as stored (contract rule 14). A tag with its own
+    frozen table: {"tag", "fields", "keep_all_fields"} (the only form the
+    settings window saves). Entries of earlier betas that were not frozen
+    yet are written back as they came: a plain string (follows the main
+    list) or beta 8's {"tag", "keep_fields", "keep_all_fields"}."""
     out: List[Any] = []
     for tag in settings.protected_tags:
         rule = settings.rule_for(tag)
-        if rule is None:
+        if rule is None or (not rule.is_frozen() and not rule.keeps_any()):
             out.append(tag)
+        elif rule.is_frozen():
+            out.append({
+                "tag": tag,
+                "fields": list(rule.fields or ()),
+                "keep_all_fields": bool(rule.keep_all),
+            })
         else:
             out.append({
                 "tag": tag,
@@ -133,45 +141,69 @@ def _read_names(raw: Any) -> List[str]:
 
 
 def _read_tags(raw: Any) -> Tuple[Tuple[str, ...], Tuple[TagRule, ...]]:
-    """Protected tag names and their rules. Each entry is a tag (a plain
-    string, as saved by earlier betas: "Tag only") or an object
-    {"tag": ..., "keep_fields": [...], "keep_all_fields": bool} (rule 14).
-    Unknown keys are ignored; a wrong `keep_fields` or `keep_all_fields`
-    means "Tag only". A tag listed twice keeps its first position and the
-    fields of both entries."""
+    """Protected tag names and their tables (contract rule 14). Each entry
+    is one of:
+
+    - {"tag": ..., "fields": [...], "keep_all_fields": bool}: the tag's own
+      frozen table (`fields` empty = keeps no fields);
+    - a plain string (beta 7 and earlier): follows the main list;
+    - {"tag": ..., "keep_fields": [...], "keep_all_fields": bool} (beta 8):
+      the main list plus `keep_fields`; one that keeps nothing is read like
+      a plain string.
+
+    Unknown keys are ignored. A `fields` that is not a list of names (a
+    single string counts as a list of one) is ignored, so the entry is read
+    as an earlier beta's. A wrong `keep_fields` or `keep_all_fields` keeps
+    nothing extra. A tag listed twice keeps its first position; its tables
+    are joined (frozen entries with frozen entries; when none is frozen,
+    beta 8's `keep_fields` as beta 8 did)."""
     if isinstance(raw, (str, dict)):
         raw = [raw]  # a single tag typed without the list brackets
     if not isinstance(raw, list):
         return (), ()
     tags: List[str] = []
-    fields: Dict[str, List[str]] = {}
+    frozen: Dict[str, Optional[List[str]]] = {}
+    extra: Dict[str, List[str]] = {}
     keep_all: Dict[str, bool] = {}
     for entry in raw:
         names: List[str] = []
+        table: Optional[List[str]] = None
         every = False
         if isinstance(entry, dict):
             tag = entry.get("tag")
-            names = _read_names(entry.get("keep_fields"))
+            if isinstance(entry.get("fields"), (list, str)):
+                table = _read_names(entry.get("fields"))
+            else:
+                names = _read_names(entry.get("keep_fields"))
             every = _read_bool(entry.get("keep_all_fields", False), False)
         else:
             tag = entry
         if not isinstance(tag, str) or not tag.strip():
             continue
         key = norm_tag(tag)
-        if key not in fields:
+        if key not in extra:
             tags.append(tag.strip())
-            fields[key] = []
+            frozen[key] = None
+            extra[key] = []
             keep_all[key] = False
-        have = {norm_field(n) for n in fields[key]}
-        fields[key].extend(n for n in names if norm_field(n) not in have)
+        if table is not None:
+            have_list = frozen[key]
+            if have_list is None:
+                have_list = frozen[key] = []
+            have = {norm_field(n) for n in have_list}
+            have_list.extend(n for n in table if norm_field(n) not in have)
+        have = {norm_field(n) for n in extra[key]}
+        extra[key].extend(n for n in names if norm_field(n) not in have)
         keep_all[key] = keep_all[key] or every
     rules: List[TagRule] = []
     for tag in tags:
         key = norm_tag(tag)
-        if keep_all[key]:
+        if frozen[key] is not None:
+            rules.append(TagRule(tag, (), keep_all[key], tuple(frozen[key] or ())))
+        elif keep_all[key]:
             rules.append(TagRule(tag, (), True))
-        elif fields[key]:
-            rules.append(TagRule(tag, tuple(fields[key]), False))
+        elif extra[key]:
+            rules.append(TagRule(tag, tuple(extra[key]), False))
     return tuple(tags), tuple(rules)
 
 

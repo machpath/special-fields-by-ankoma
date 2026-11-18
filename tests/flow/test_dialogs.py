@@ -467,11 +467,13 @@ def test_question_shows_tag_rules_and_long_rows_do_not_widen_it(question, qapp):
 
     tags = ("#edited", "#eevee", "my-private-tag", "board-review")
     s = dataclasses.replace(default_settings(), protected_tags=tags, tag_rules=(
-        TagRule("#edited", ("Text", "Extra", "Personal Notes", "Header"), False),
-        TagRule("board-review", (), True)))
+        TagRule("#edited", (), False, ("Text", "Extra", "Personal Notes", "Header")),
+        TagRule("#eevee", (), False, ()),
+        TagRule("board-review", (), True, ())))
     rows = choices_summary(s)
     value = dict(rows)["Protected tags"]
-    assert value == ("#edited (keeps Text, Extra, Personal Notes, Header), #eevee, "
+    # my-private-tag: a plain string of an earlier beta, by name only
+    assert value == ("#edited (keeps Text, Extra, Personal Notes, Header), #eevee (keeps no fields), "
                      "my-private-tag, board-review (keeps every field)")
     dlg = question(rows=rows)
     assert dlg.width() == 540 and dlg.minimumSizeHint().width() <= 540
@@ -480,16 +482,50 @@ def test_question_shows_tag_rules_and_long_rows_do_not_widen_it(question, qapp):
     val = row.findChild(QLabel, "choice_value")
     assert val.text() == value and val.wordWrap()
     assert row.height() == val.heightForWidth(val.width())  # no empty line under it
-    assert row.height() < 3 * val.fontMetrics().lineSpacing()
+    assert row.height() <= 3 * val.fontMetrics().lineSpacing()
     long_tag = "#ANKOMA::CP::Immunology::Autoimmunity::AutoImmuneDiseases::FamilialMediterraneanFever"
     s2 = dataclasses.replace(default_settings(), protected_tags=(long_tag,),
-                             tag_rules=(TagRule(long_tag, ("Text",), False),))
+                             tag_rules=(TagRule(long_tag, (), False, ("Text",)),))
     dlg2 = question(rows=choices_summary(s2))
     assert dlg2.width() == 540 and dlg2.minimumSizeHint().width() <= 540
     val2 = [w for w in dlg2.findChildren(QLabel, "choice_value") if "keeps Text" in w.text()][0]
     assert "…" in val2.text() and val2.text().endswith("(keeps Text)")
     assert _shown_tooltip(val2.toolTip()) == "%s (keeps Text)" % long_tag
     assert dlg2.findChild(QWidget, "choices_box").accessibleDescription().count(long_tag) == 1
+
+
+def test_question_shows_at_most_three_lines_of_protected_tags(question, qapp):
+    """Many protected tags: at most three lines, then "+N more"; the
+    tooltip and the row's accessible name have the whole value."""
+    import dataclasses
+
+    from special_fields_by_ankoma.model import TagRule
+    from special_fields_by_ankoma.settings_dialog import split_tag_summary
+
+    tags = tuple("#tag-number-%d" % i for i in range(12))
+    s = dataclasses.replace(default_settings(), protected_tags=tags, tag_rules=tuple(
+        TagRule(t, (), False, ("Header", "Personal Notes")) for t in tags))
+    rows = choices_summary(s)
+    value = dict(rows)["Protected tags"]
+    dlg = question(rows=rows)
+    assert dlg.width() == 540
+    row = [w for w in dlg.findChildren(QWidget, "choice_row") if w.property("label") == "Protected tags"][0]
+    val = row.findChild(QLabel, "choice_value")
+    shown = val.text()
+    assert shown != value and shown.endswith(" more")
+    entries = split_tag_summary(value)
+    n_shown = len(split_tag_summary(shown.rsplit(", +", 1)[0]))
+    assert 0 < n_shown < len(entries)
+    assert shown == ", ".join(entries[:n_shown]) + ", +%d more" % (len(entries) - n_shown)
+    lines = round(val.heightForWidth(val.width()) / val.fontMetrics().lineSpacing())
+    assert lines <= 3, lines
+    assert _shown_tooltip(val.toolTip()) == value
+    assert row.accessibleName() == "Protected tags: " + value
+    # a few tags fit: no "+N more"
+    few = dataclasses.replace(s, protected_tags=tags[:2], tag_rules=s.tag_rules[:2])
+    dlg2 = question(rows=choices_summary(few))
+    val2 = [w for w in dlg2.findChildren(QLabel, "choice_value") if "#tag-number-0" in w.text()][0]
+    assert "more" not in val2.text() and val2.toolTip() == ""
 
 
 @pytest.mark.parametrize("full_sync", [False, True])

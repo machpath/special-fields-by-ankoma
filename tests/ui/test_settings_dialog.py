@@ -12,15 +12,15 @@ from aqt.qt import QDialog, QPalette, QColor, QApplication, QWidget, QPushButton
 
 from special_fields_by_ankoma.config import (
     DEFAULT_FIELDS, default_settings, settings_from_config, settings_to_config)
-from special_fields_by_ankoma.model import ACCENT_COLOR, FieldChoice, Settings
+from special_fields_by_ankoma.model import ACCENT_COLOR, FieldChoice, Settings, TagRule
 from special_fields_by_ankoma.settings_dialog import (
     KEEP_LABEL,
     PRESETS_HEADING,
-    PRESETS_HELP,
+    PRESETS_INFO,
     SCHEDULING_HEADING,
-    SCHEDULING_HELP,
-    STYLING_HELP,
-    TAGS_HELP,
+    SCHEDULING_INFO,
+    STYLING_INFO,
+    TAGS_INFO,
     TAKE_LABEL,
     WINDOW_TITLE,
     FieldRow,
@@ -69,7 +69,7 @@ def test_title_and_default_rows(make_dialog):
     assert dlg.windowTitle() == WINDOW_TITLE == "Special Fields by Ankoma: Settings"
     assert [r.name for r in dlg.field_rows()] == [n for n, _ in DEFAULT_FIELDS]
     assert [r.toggle.keep() for r in dlg.field_rows()] == [k for _, k in DEFAULT_FIELDS]
-    assert dlg.findChild(type(dlg.tag_hint), "tags_help").text() == TAGS_HELP
+    assert dlg.info_buttons["tags"].info_text() == TAGS_INFO
     assert dlg.result_settings() == default_settings()
 
 
@@ -431,7 +431,7 @@ def test_remove_tag_chip(make_dialog):
     s = dataclasses.replace(default_settings(), protected_tags=("#edited", "weak-areas"))
     dlg = make_dialog(settings=s)
     assert [c.tag for c in dlg.tag_chips()] == ["#edited", "weak-areas"]
-    assert not dlg.no_tags_label.isVisible()
+    assert dlg.tag_chips_widget.isVisible()
     chip = dlg.tag_chips()[0]
     QTest.mouseClick(chip.remove_button, Qt.MouseButton.LeftButton)
     assert [c.tag for c in dlg.tag_chips()] == ["weak-areas"]
@@ -442,7 +442,8 @@ def test_remove_tag_chip(make_dialog):
     dlg.tag_input.clear()
     dlg.tag_chips()[0].remove_button.click()
     assert dlg.tag_chips() == []
-    assert dlg.no_tags_label.isVisible()
+    # no protected tags: the tag box alone, no extra line
+    assert not dlg.tag_chips_widget.isVisible()
 
 
 # --------------------------------------------------------------------------
@@ -484,14 +485,18 @@ def test_import_switches_toggle_and_labels(make_dialog):
     assert dlg.result_settings().import_scheduling is False
     assert dlg.scheduling_switch.accessibleName() == SCHEDULING_HEADING == "Import learning progress"
     assert dlg.presets_switch.accessibleName() == PRESETS_HEADING == "Import deck options"
-    # Heading and help shown as plain text, in the same kind of row as the styling switch.
+    # Headings shown as plain text; the help is in each one's (i) bubble.
     from aqt.qt import QLabel
     texts = {lab.text(): lab for lab in dlg.findChildren(QLabel)}
-    for text in (SCHEDULING_HEADING, SCHEDULING_HELP, PRESETS_HEADING, PRESETS_HELP, STYLING_HELP):
+    for text in (SCHEDULING_HEADING, PRESETS_HEADING):
         assert text in texts, text
         assert texts[text].textFormat() == Qt.TextFormat.PlainText
-    assert "Cards you already have always keep your own progress" in SCHEDULING_HELP
-    assert "never changed" in PRESETS_HELP
+    for text in (SCHEDULING_INFO, PRESETS_INFO, STYLING_INFO):
+        assert text not in texts, text
+    assert dlg.info_buttons["scheduling"].info_text() == SCHEDULING_INFO
+    assert dlg.info_buttons["presets"].info_text() == PRESETS_INFO
+    assert "Cards you already have always keep your own progress" in SCHEDULING_INFO
+    assert "never changed" in PRESETS_INFO
 
 
 def test_import_switches_come_from_settings_and_save(make_dialog):
@@ -506,10 +511,13 @@ def test_import_switches_come_from_settings_and_save(make_dialog):
 
 
 def test_switch_tab_order(make_dialog):
-    """Tab goes styling -> learning progress -> deck presets -> Restore defaults."""
+    """Tab goes styling -> learning progress -> deck presets -> Restore
+    defaults, each switch after its (i) bubble."""
     dlg = make_dialog()
-    order = [dlg.styling_switch, dlg.scheduling_switch, dlg.presets_switch, dlg.restore_button]
-    dlg.styling_switch.setFocus()
+    info = dlg.info_buttons
+    order = [info["styling"], dlg.styling_switch, info["scheduling"], dlg.scheduling_switch,
+             info["presets"], dlg.presets_switch, dlg.restore_button]
+    info["styling"].setFocus()
     QApplication.processEvents()
     for here, there in zip(order, order[1:]):
         assert QApplication.focusWidget() is here, QApplication.focusWidget()
@@ -561,6 +569,8 @@ def test_save_returns_settings(make_dialog):
         ),
         protected_tags=("#edited",),
         update_note_types=False,
+        # the first tag starts as the main list's kept fields at that moment
+        tag_rules=(TagRule("#edited", (), False, ("Header", "Personal Notes", "Remarks")),),
     )
     assert got.kept_field_names() == frozenset({"header", "personal notes", "remarks"})
 

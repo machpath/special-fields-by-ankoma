@@ -28,7 +28,7 @@ Built for the [Ankoma](https://ankomapath.com) pathology deck. Works with any de
 
 - **Fields.** For each field, choose "Keep mine" or "Take the update's". By default only Personal Notes is kept. Add any field from your own note types.
 - **Tags.** Updates replace a note's tags with the author's. Protect the tags you want to keep and an update will never remove them.
-- **Extra fields on tagged cards.** A protected tag can keep more fields on the cards that have it. For example: keep Personal Notes everywhere, and also Text and Extra on cards tagged #edited. Or keep every field on them.
+- **Different fields on tagged cards.** Each protected tag has its own Keep mine / Take the update's list for the cards that have it, which can keep more fields than everywhere else, or fewer. For example: keep Personal Notes everywhere, but Text and Extra on cards tagged #edited. Or keep every field on them. A new tag starts from the previous tag's choices, and changing your main list later never changes a tag you've set up.
 - **Card templates and styling.** Choose whether updates can change how your existing cards look.
 
 ### Optional, off by default

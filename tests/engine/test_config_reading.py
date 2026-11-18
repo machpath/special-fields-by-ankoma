@@ -79,9 +79,9 @@ def test_shipped_config_json_is_the_default_config():
 
 
 def test_tag_rules_read_tolerantly():
-    """Rule 14: plain strings (earlier betas) and objects mix; junk falls
-    back to "Tag only"; a tag listed twice keeps its first place and the
-    fields of both entries; "every field" wins over a field list."""
+    """Beta 8 objects: plain strings (earlier betas) and objects mix; junk
+    falls back to a plain tag; a tag listed twice keeps its first place and
+    the fields of both entries; "every field" wins over a field list."""
     s = c.settings_from_config({"protected_tags": [
         "#eevee",
         {"tag": " #edited ", "keep_fields": ["Text", " text ", "", 3, "Extra"], "colour": "red"},
@@ -104,5 +104,60 @@ def test_tag_rules_read_tolerantly():
 
 
 def test_tag_only_saved_as_plain_string():
+    """A beta 8 entry that keeps nothing is written as beta 8 wrote it."""
     s = c.Settings(protected_tags=("#a", "#b"), tag_rules=(c.TagRule("#b", (), False),))
     assert c.settings_to_config(s)["protected_tags"] == ["#a", "#b"]
+
+
+def test_frozen_tables_read_tolerantly():
+    """Rule 14 as approved on 17 Nov 2026: {"tag", "fields",
+    "keep_all_fields"}. `fields` empty = keeps no fields; a single string
+    is a list of one; junk names are skipped; a `fields` that is not a list
+    or a string is ignored (read as an earlier beta's entry); a tag listed
+    twice keeps its first place and joins its frozen tables (a beta 8 entry
+    for the same tag is then dropped)."""
+    s = c.settings_from_config({"fields": [{"name": "Personal Notes", "keep": True}], "protected_tags": [
+        {"tag": "#none", "fields": []},
+        {"tag": " #edited ", "fields": ["Text", " text ", "", 3, "Extra"], "colour": "red"},
+        {"tag": "#one", "fields": "Header", "keep_all_fields": "yes"},
+        {"tag": "#junk", "fields": 5, "keep_fields": ["Text"]},
+        {"tag": "#junk2", "fields": {"a": 1}},
+        {"tag": "#EDITED", "keep_fields": ["Header"]},
+        {"tag": "#edited", "fields": ["Personal Notes"], "keep_all_fields": "maybe"},
+    ]})
+    assert s.protected_tags == ("#none", "#edited", "#one", "#junk", "#junk2")
+    assert s.tag_rules == (
+        c.TagRule("#none", (), False, ()),
+        c.TagRule("#edited", (), False, ("Text", "Extra", "Personal Notes")),
+        c.TagRule("#one", (), True, ("Header",)),
+        c.TagRule("#junk", ("Text",), False),
+    )
+    assert s.rule_for("#junk2") is None  # follows the main list
+    assert s.tag_table("#none") == (frozenset(), False)
+    assert s.tag_table("#junk") == (frozenset({"personal notes", "text"}), False)
+    assert s.tag_table("#junk2") == (frozenset({"personal notes"}), False)
+    again = c.settings_from_config(c.settings_to_config(s))
+    assert again == s
+
+
+def test_with_frozen_tags_freezes_legacy_entries_at_the_main_list():
+    """What the settings window does on opening: a plain string becomes the
+    main list's kept fields, a beta 8 object the main list plus its fields
+    (spelled as in the main list where it can), "every field" stays; an
+    entry already frozen is left alone."""
+    s = c.settings_from_config({
+        "fields": [{"name": "Header", "keep": False}, {"name": "Personal Notes", "keep": True}],
+        "protected_tags": ["#plain", {"tag": "#b8", "keep_fields": ["header", "Text", "personal notes"]},
+                           {"tag": "#all", "keep_all_fields": True}, {"tag": "#done", "fields": ["Text"]}]})
+    f = s.with_frozen_tags()
+    assert f.protected_tags == s.protected_tags
+    assert f.tag_rules == (
+        c.TagRule("#plain", (), False, ("Personal Notes",)),
+        c.TagRule("#b8", (), False, ("Personal Notes", "Header", "Text")),
+        c.TagRule("#all", (), True, ("Personal Notes",)),
+        c.TagRule("#done", (), False, ("Text",)),
+    )
+    for tags in (["#plain"], ["#b8::x"], ["#all"], ["#done"], ["other"], ["#plain", "#b8"]):
+        assert f.fields_kept_for(tags) == s.fields_kept_for(tags), tags
+    assert c.settings_to_config(f)["protected_tags"][0] == {
+        "tag": "#plain", "fields": ["Personal Notes"], "keep_all_fields": False}
