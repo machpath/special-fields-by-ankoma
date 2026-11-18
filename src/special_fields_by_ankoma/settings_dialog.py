@@ -21,6 +21,8 @@ Widgets carry objectNames so tests and other workstreams can find them:
     scheduling_switch "Import learning progress"
     presets_switch    "Import deck options"
     restore_button, cancel_button, save_button
+    discard_question  the "Discard your changes?" box (discard_button,
+                      keep_editing_button), shown by `confirm_discard`
 """
 
 from __future__ import annotations
@@ -80,6 +82,9 @@ PRESETS_HELP = (
     "you already have are never changed. Off: no deck options are imported."
 )
 ON_TEXT = "#FFFFFF"
+DISCARD_QUESTION = "Discard your changes?"
+DISCARD_LABEL = "Discard"
+KEEP_EDITING_LABEL = "Keep editing"
 
 # How many matching tags the list shows at once. Matching itself always uses
 # every tag, so "the only match" is judged on the full collection.
@@ -156,6 +161,31 @@ def _pick_target(query: str, matches: Sequence[str], norm) -> Optional[str]:
     if len(matches) == 1:
         return matches[0]
     return None
+
+
+def confirm_discard(parent: Optional[QWidget]) -> bool:
+    """Ask "Discard your changes?"; True if the user chose "Discard".
+
+    "Keep editing" is the default button and the Esc choice, so a second Esc
+    never discards. Tests replace this function or answer the box (object
+    name "discard_question") from a timer."""
+    box = QMessageBox(parent)
+    box.setObjectName("discard_question")
+    box.setWindowTitle(ADDON_NAME)
+    box.setTextFormat(Qt.TextFormat.PlainText)
+    box.setText(DISCARD_QUESTION)
+    box.setIcon(QMessageBox.Icon.Question)
+    discard = box.addButton(DISCARD_LABEL, QMessageBox.ButtonRole.DestructiveRole)
+    discard.setObjectName("discard_button")
+    keep = box.addButton(KEEP_EDITING_LABEL, QMessageBox.ButtonRole.RejectRole)
+    keep.setObjectName("keep_editing_button")
+    box.setDefaultButton(keep)
+    box.setEscapeButton(keep)
+    try:
+        box.exec()
+        return box.clickedButton() is discard
+    finally:
+        box.deleteLater()
 
 
 def choices_summary(settings: Settings) -> List[Tuple[str, str]]:
@@ -375,6 +405,17 @@ class ToggleSwitch(QCheckBox):
         p.end()
 
 
+class _ElidingDelegate(QStyledItemDelegate):
+    """Item delegate for the tag and field lists: every row is only as wide
+    as the list, so the view never needs a horizontal scroll bar and a long
+    name is elided (in the middle, by the view's text elide mode) instead of
+    being cut off. The item's own text stays the full name."""
+
+    def sizeHint(self, option: Any, index: Any) -> QSize:  # noqa: N802
+        hint = super().sizeHint(option, index)
+        return QSize(1, hint.height())
+
+
 class FieldToggle(QWidget):
     """Two-part toggle: "Keep mine" | "Take the update's"."""
 
@@ -526,10 +567,18 @@ class SettingsDialog(QDialog):
         self._tag_matches: List[str] = []
         self._field_matches: List[str] = []
         self._result: Optional[Settings] = None
+        # The smallest height the window keeps when its content shrinks: the
+        # height it opened with, or whatever the user resized it to.
+        self._floor_height = 0
+        self._auto_resizing = False
 
         self._build()
         self._apply_settings(settings)
+        # What the window opened with, as it shows it: closing without
+        # saving asks first only when the choices differ from this.
+        self._opened_with = self._current_settings()
         self._size_to_content()
+        self._focus_first_control()
 
     # ----- construction -----------------------------------------------------
 
@@ -730,7 +779,7 @@ class SettingsDialog(QDialog):
         self.field_matches.setAccessibleName("Fields you can add")
         self.field_matches.setToolTip("Click a field to add it")
         self.field_matches.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.field_matches.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self._setup_list(self.field_matches)
         self.field_matches.itemClicked.connect(lambda item: self._add_field_from_list(item.text()))
         pl.addWidget(self.field_matches)
         self.field_hint = self._muted_label("", "field_hint")
@@ -770,7 +819,7 @@ class SettingsDialog(QDialog):
         self.tag_list.setObjectName("tag_list")
         self.tag_list.setAccessibleName("Matching tags")
         self.tag_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.tag_list.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self._setup_list(self.tag_list)
         # One click adds the tag: no highlight-then-confirm step.
         self.tag_list.itemClicked.connect(self._on_tag_clicked)
         self.tag_list.hide()
@@ -781,6 +830,24 @@ class SettingsDialog(QDialog):
         self.tag_hint.hide()
         sec.addWidget(self.tag_hint)
         return sec
+
+    def _setup_list(self, lst: QListWidget) -> None:
+        """No horizontal scroll bar (it would hide the last row): long names
+        are elided in the middle, so both the start and the leaf of a
+        hierarchical tag stay readable; the tooltip has the full name."""
+        lst.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        lst.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        lst.setWordWrap(False)
+        lst.setItemDelegate(_ElidingDelegate(lst))
+
+    def _fill_list(self, lst: QListWidget, names: Sequence[str]) -> None:
+        """Rows for `names`; each row's text is the full name (what gets
+        added) and its tooltip shows the full name too."""
+        lst.clear()
+        for name in names:
+            item = QListWidgetItem(name)
+            item.setToolTip(_plain_tooltip(name))
+            lst.addItem(item)
 
     def _build_styling_section(self) -> QHBoxLayout:
         self.styling_switch, row = self._switch_row(STYLING_HEADING, STYLING_HELP, "styling_switch")
@@ -801,6 +868,57 @@ class SettingsDialog(QDialog):
         switch.setToolTip(heading)
         row.addWidget(switch, 0, Qt.AlignmentFlag.AlignVCenter)
         return switch, row
+
+    def _focus_first_control(self) -> None:
+        """On opening, keyboard focus goes to the first field row's toggle
+        (its selected side), or to "+ Add field" when there are no rows; never
+        to the scroll area or the tag box."""
+        if self._rows:
+            self._rows[0].toggle.selected_button().setFocus()
+        else:
+            self.add_field_button.setFocus()
+
+    def _fit_height(self) -> None:
+        """Grow or shrink the window to fit its content after a list or the
+        field picker opens or closes: never above 90% of the screen height
+        (nor past the screen's bottom edge), never below the height it
+        opened with or the user gave it. Only the height changes, so the
+        top-left corner stays where it is."""
+        if not self.isVisible():
+            return
+        # Inner boxes first, so no cached height is stale (a row just added).
+        for box in (self.field_rows_frame, self.field_picker, self.tag_chips_widget):
+            box.layout().invalidate()
+            box.layout().activate()
+        lay = self.body.layout()
+        lay.invalidate()
+        lay.activate()
+        # Measured as if the vertical scroll bar were showing: the scroll area
+        # decides whether to keep a bar it already shows at that narrower
+        # width, and a few spare pixels go to the stretch at the bottom.
+        bar = self.scroll.verticalScrollBar().sizeHint().width()
+        width = max(1, self.scroll.width() - bar)
+        want = lay.totalHeightForWidth(width) + (self.height() - self.scroll.height())
+        cap = want
+        screen = self.screen() if hasattr(self, "screen") else None
+        if screen is not None:
+            avail = screen.availableGeometry()
+            cap = int(avail.height() * 0.9)
+            frame_extra = self.frameGeometry().height() - self.height()
+            room = avail.bottom() + 1 - self.frameGeometry().top() - frame_extra
+            cap = min(cap, max(room, self.height()))
+        target = max(min(want, cap), self._floor_height, self.minimumHeight())
+        if target != self.height():
+            self._auto_resizing = True
+            try:
+                self.resize(self.width(), target)
+            finally:
+                self._auto_resizing = False
+
+    def resizeEvent(self, event: Any) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if not self._auto_resizing:
+            self._floor_height = self.height()
 
     def _size_to_content(self) -> None:
         self.body.adjustSize()
@@ -847,6 +965,17 @@ class SettingsDialog(QDialog):
     def accept(self) -> None:
         self._result = self._current_settings()
         super().accept()
+
+    def has_changes(self) -> bool:
+        """True if the choices shown differ from the ones the window opened
+        with (changed and changed back counts as unchanged)."""
+        return self._current_settings() != self._opened_with
+
+    def reject(self) -> None:
+        """Esc, Cancel and the close box: ask before discarding changes."""
+        if self.has_changes() and not confirm_discard(self):
+            return
+        super().reject()
 
     def restore_defaults(self) -> None:
         self._apply_settings(default_settings())
@@ -911,6 +1040,7 @@ class SettingsDialog(QDialog):
         self.field_search.clear()
         self._refresh_field_matches()
         self.field_search.setFocus()
+        self._fit_height()
 
     def close_field_picker(self) -> None:
         had_focus = self.field_picker.isAncestorOf(QApplication.focusWidget()) if QApplication.focusWidget() else False
@@ -922,12 +1052,12 @@ class SettingsDialog(QDialog):
         self.add_field_button.show()
         if had_focus:
             self.add_field_button.setFocus()
+        self._fit_height()
 
     def _refresh_field_matches(self, *_args: Any) -> None:
         query = self.field_search.text()
         self._field_matches = filter_fields(query, self._all_fields, [r.name for r in self._rows])
-        self.field_matches.clear()
-        self.field_matches.addItems(self._field_matches)
+        self._fill_list(self.field_matches, self._field_matches)
         target = _pick_target(query, self._field_matches, norm_field)
         if target is not None:
             self.field_matches.setCurrentRow(self._field_matches.index(target))
@@ -939,6 +1069,7 @@ class SettingsDialog(QDialog):
         else:
             self._set_field_hint("No other fields in your note types match.")
         self.field_matches.setVisible(bool(self._field_matches))
+        self._fit_height()
 
     def _set_field_hint(self, text: str) -> None:
         self.field_hint.setText(text)
@@ -967,7 +1098,9 @@ class SettingsDialog(QDialog):
         self.field_search.clear()
         self.field_search.blockSignals(False)
         self._refresh_field_matches()
-        self._set_field_hint('Added "%s". It starts as "%s".' % (spelled, TAKE_LABEL))
+        # No message after adding (like the tag picker); hints only report
+        # a problem.
+        self._set_field_hint("")
         return True
 
     def _add_field_from_list(self, name: str) -> None:
@@ -1034,8 +1167,7 @@ class SettingsDialog(QDialog):
         self._tag_matches = filter_tags(query, self._all_tags, self._tags)
         shown = self._tag_matches[:MAX_TAGS_SHOWN]
         self.tag_list.blockSignals(True)
-        self.tag_list.clear()
-        self.tag_list.addItems(shown)
+        self._fill_list(self.tag_list, shown)
         # The first match is highlighted, ready for Enter. The exception: the
         # typed text is itself an already protected tag, so Enter must not add
         # a different (sub-) tag by accident.
@@ -1060,6 +1192,7 @@ class SettingsDialog(QDialog):
             )
         else:
             self._set_tag_hint("")
+        self._fit_height()
 
     def _set_tag_hint(self, text: str) -> None:
         """The line under the tag box: shown only when there is something to say."""

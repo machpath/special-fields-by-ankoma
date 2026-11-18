@@ -276,7 +276,8 @@ def test_engine_runs_in_collection_op_and_summary_then_done(fake_mw, pristine_im
     assert dict(seen["rows"])["New notes added"] == "3"
     assert seen["parent"] is mw
     # CollectionOp ran with Anki's import progress callback, on the background thread
-    assert mw.taskman.progress_updates == [importing.import_progress_update]
+    # (wrapped so the label names the add-on; see test_progress_label_and_title)
+    assert mw.taskman.progress_updates == [flow._progress_update]
     assert mw.background_ops == 0
     # aqt's on_op_finished ran (undo menu refreshed) before the summary
     assert seen["undo_actions_updated_before_summary"] >= 1
@@ -311,8 +312,8 @@ def test_learning_progress_row_only_when_switched_on(fake_mw, pristine_importer,
     assert _wait(qapp, lambda: "rows" in seen)
     assert seen["question"]["Learning progress"] == ("Imported for new cards" if on else "Not imported")
     labels = [r[0] for r in seen["rows"]]
-    assert labels.index("Review history and deck moves") == labels.index("Tags") + 1
-    assert dict(seen["rows"])["Review history and deck moves"] == "Unchanged"
+    assert labels.index("Your existing cards: review history and decks") == labels.index("Tags") + 1
+    assert dict(seen["rows"])["Your existing cards: review history and decks"] == "Unchanged"
     if on:
         assert labels[-1] == "New cards with learning progress"
         assert seen["rows"][-1][1] == "3"
@@ -353,25 +354,165 @@ def test_undo_refused_when_update_is_not_on_top(fake_mw, monkeypatch):
     assert warned
 
 
-def test_engine_failure_shows_anki_error_and_changes_nothing(fake_mw, pristine_importer, tmp_path, monkeypatch):
+def _box_poller(seen):
+    """Answer the next visible QMessageBox (records text, format, title)."""
+    from aqt.qt import QMessageBox, QTimer
+
+    def poll_box():
+        for w in QApplication.topLevelWidgets():
+            if isinstance(w, QMessageBox) and w.isVisible():
+                seen.update(text=w.text(), fmt=w.textFormat(), title=w.windowTitle())
+                w.accept()
+                return
+        seen["tries"] = seen.get("tries", 0) + 1
+        if seen["tries"] < 500:
+            QTimer.singleShot(10, poll_box)
+
+    return poll_box
+
+
+@pytest.mark.parametrize("content", [b"this is not a zip file", b""])
+def test_invalid_file_plain_warning_no_backup_nothing_imported(fake_mw, pristine_importer, tmp_path,
+                                                               qapp, monkeypatch, content):
+    """Fix 6: a file that is not a zip (or an empty one) is refused before
+    anything happens: no backup, no engine, a plain warning with the file
+    name instead of Anki's backend text."""
+    import aqt.operations
+
+    from special_fields_by_ankoma import engine
+
     importing = pristine_importer
     mw = fake_mw
     flow.setup(mw)
-    bad = tmp_path / "broken.apkg"
-    bad.write_bytes(b"this is not a zip file")
-    errors = []
-    import aqt.operations
-
+    bad = tmp_path / "broken deck.apkg"
+    bad.write_bytes(content)
+    errors, backups, runs = [], [], []
     monkeypatch.setattr(aqt.operations, "show_exception",
                         lambda *, parent, exception: errors.append((parent, exception)))
+    monkeypatch.setattr(flow, "backup_before_import", lambda col, folder: backups.append(1) or True)
+    real_run = engine.run_import
+    monkeypatch.setattr(engine, "run_import", lambda *a: runs.append(1) or real_run(*a))
     before_undo = mw.col.undo_status().undo
-    when_shown("special_fields_question", _click("import_button"))
+    seen = {}
+    poll = _box_poller(seen)
+
+    def in_question(dlg):
+        poll()
+        QTest.mouseClick(dlg.import_button, Qt.MouseButton.LeftButton)
+
+    when_shown("special_fields_question", in_question)
     importing.import_file(mw, str(bad))
-    assert len(errors) == 1 and errors[0][0] is mw
+    assert _wait(qapp, lambda: "text" in seen)
+    assert seen["text"] == (
+        "Nothing was imported. This file isn't a valid Anki package, or it is damaged."
+        "\n\nFile: broken deck.apkg"
+    )
+    assert seen["fmt"] == Qt.TextFormat.PlainText and seen["title"] == ADDON_NAME
+    assert errors == [] and backups == [] and runs == []
     assert mw.col.note_count() == 0
     assert mw.col.undo_status().undo == before_undo
     assert find_top_level("special_fields_summary") is None
     assert mw.background_ops == 0
+
+
+def test_zip_without_collection_is_invalid(tmp_path, apkg):
+    import zipfile
+
+    p = tmp_path / "photos.apkg"
+    with zipfile.ZipFile(str(p), "w") as z:
+        z.writestr("media", b"")
+        z.writestr("picture.jpg", b"x")
+    assert flow.looks_like_apkg(str(p)) is False
+    assert flow.looks_like_apkg(str(tmp_path / "missing.apkg")) is False
+    assert flow.looks_like_apkg(apkg) is True
+
+
+def test_broken_package_shows_anki_message_plainly(fake_mw, pristine_importer, tmp_path, apkg,
+                                                    qapp, monkeypatch):
+    """Fix 6: a valid zip that looks like a package but whose collection is
+    damaged passes the check; Anki's importer fails and the warning quotes
+    Anki's message after "Anki couldn't read this file:"."""
+    import zipfile
+
+    import aqt.operations
+
+    importing = pristine_importer
+    mw = fake_mw
+    flow.setup(mw)
+    bad = tmp_path / "damaged.apkg"
+    with zipfile.ZipFile(apkg) as src, zipfile.ZipFile(str(bad), "w") as dst:
+        for info in src.infolist():
+            data = src.read(info.filename)
+            if info.filename.startswith("collection.anki2"):
+                data = b"\0garbage" * 64
+            dst.writestr(info.filename, data)
+    assert flow.looks_like_apkg(str(bad))
+    errors = []
+    monkeypatch.setattr(aqt.operations, "show_exception",
+                        lambda *, parent, exception: errors.append((parent, exception)))
+    seen = {}
+    poll = _box_poller(seen)
+
+    def in_question(dlg):
+        poll()
+        QTest.mouseClick(dlg.import_button, Qt.MouseButton.LeftButton)
+
+    when_shown("special_fields_question", in_question)
+    importing.import_file(mw, str(bad))
+    assert _wait(qapp, lambda: "text" in seen)
+    lead = "Nothing was imported. Anki couldn't read this file:\n\n"
+    assert seen["text"].startswith(lead) and len(seen["text"]) > len(lead)
+    assert "unchanged" not in seen["text"]
+    assert seen["fmt"] == Qt.TextFormat.PlainText and seen["title"] == ADDON_NAME
+    assert errors == []
+    assert mw.col.note_count() == 0
+    assert find_top_level("special_fields_summary") is None
+    assert mw.background_ops == 0
+
+
+def test_errors_after_the_native_import_keep_anki_error_dialog(fake_mw, apkg, monkeypatch):
+    """Only a failure inside Anki's own importer gets the "couldn't read
+    this file" text; an error raised elsewhere keeps Anki's error dialog."""
+    import aqt.operations
+    import aqt.utils
+
+    from special_fields_by_ankoma import engine
+
+    errors, warnings = [], []
+    monkeypatch.setattr(aqt.operations, "show_exception",
+                        lambda *, parent, exception: errors.append(exception))
+    monkeypatch.setattr(aqt.utils, "showWarning", lambda *a, **k: warnings.append(a))
+
+    def run(col, path, settings):
+        # A real backend error, but not from the package importer.
+        col.get_note(123456789)  # NotFoundError from Anki's backend
+
+    monkeypatch.setattr(engine, "run_import", run)
+    flow.run_import_with_choices(fake_mw, apkg, load_settings(fake_mw))
+    assert len(errors) == 1 and warnings == []
+
+
+def test_progress_label_and_title(fake_mw, apkg, monkeypatch):
+    """Fix 4: the backend progress callback always sets our label (and still
+    aborts on Cancel); the progress window gets the add-on's name as title.
+    Without `set_title` (FakeProgress lacks it) nothing breaks."""
+    from anki.collection import Progress
+
+    from aqt.progress import ProgressUpdate
+
+    monkeypatch.setattr(flow, "_later", lambda mw, f: None)
+    flow.run_import_with_choices(fake_mw, apkg, load_settings(fake_mw))  # no set_title: fine
+    cb = fake_mw.taskman.progress_updates[-1]
+    upd = ProgressUpdate()
+    cb(Progress(), upd)
+    assert upd.label == "Updating with Special Fields by Ankoma…" and not upd.abort
+    upd = ProgressUpdate(user_wants_abort=True)
+    cb(Progress(importing="Importing..."), upd)  # Anki aborts only while importing
+    assert upd.abort and upd.label == flow.PROGRESS_TEXT
+    titles = []
+    fake_mw.progress.set_title = titles.append
+    flow.run_import_with_choices(fake_mw, apkg, load_settings(fake_mw))
+    assert titles == ["Special Fields by Ankoma"]
 
 
 def test_op_returns_result_with_changes(fake_mw, apkg, monkeypatch):
@@ -517,7 +658,7 @@ def test_unrepairable_move_shows_plain_warning_and_imports_nothing(fake_mw, pris
     assert mw.background_ops == 0
 
 
-def test_other_engine_errors_keep_anki_error_dialog(fake_mw, monkeypatch):
+def test_other_engine_errors_keep_anki_error_dialog(fake_mw, apkg, monkeypatch):
     """Only MergeRepairError gets the plain warning."""
     import aqt.operations
     import aqt.utils
@@ -537,10 +678,10 @@ def test_other_engine_errors_keep_anki_error_dialog(fake_mw, monkeypatch):
         return run
 
     monkeypatch.setattr(engine, "run_import", raise_(boom))
-    flow.run_import_with_choices(fake_mw, "/x/deck.apkg", load_settings(fake_mw))
+    flow.run_import_with_choices(fake_mw, apkg, load_settings(fake_mw))
     assert errors == [(fake_mw, boom)] and warnings == []
     monkeypatch.setattr(engine, "run_import", raise_(engine.MergeRepairError("SFA MI", "test")))
-    flow.run_import_with_choices(fake_mw, "/x/deck.apkg", load_settings(fake_mw))
+    flow.run_import_with_choices(fake_mw, apkg, load_settings(fake_mw))
     assert len(errors) == 1 and len(warnings) == 1
     (args, kwargs) = warnings[0]
     assert args[0] == flow.MERGE_REPAIR_WARNING
@@ -620,7 +761,7 @@ def test_rollback_failed_real_backend_failure_with_backup(fake_mw, pristine_impo
 
 
 @pytest.mark.parametrize("made", [True, False])
-def test_rollback_failed_text_follows_backup_result(fake_mw, monkeypatch, made):
+def test_rollback_failed_text_follows_backup_result(fake_mw, apkg, monkeypatch, made):
     import aqt.operations
     import aqt.utils
 
@@ -637,7 +778,7 @@ def test_rollback_failed_text_follows_backup_result(fake_mw, monkeypatch, made):
         raise engine.RollbackFailedError(RuntimeError("backend refused"))
 
     monkeypatch.setattr(engine, "run_import", run)
-    flow.run_import_with_choices(fake_mw, "/x/deck.apkg", load_settings(fake_mw))
+    flow.run_import_with_choices(fake_mw, apkg, load_settings(fake_mw))
     assert errors == [] and summaries == []
     assert len(warnings) == 1
     args, kwargs = warnings[0]

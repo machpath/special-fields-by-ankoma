@@ -234,10 +234,13 @@ def test_open_settings_cancel(qapp, monkeypatch):
         self.reject()
         return self.result()
 
+    asked = []
     monkeypatch.setattr(sd.SettingsDialog, "exec", fake_exec)
+    monkeypatch.setattr(sd, "confirm_discard", lambda parent: asked.append(parent) or True)
     mw = fake_mw(default_config(), col=fake_col())
     assert sd.open_settings(mw) is None
     assert mw.addonManager.writes == []
+    assert len(asked) == 1  # a change was made: "Discard your changes?" was asked
 
 
 def test_open_settings_without_collection(qapp, monkeypatch):

@@ -61,6 +61,8 @@ def make_dialog(qapp):
 
     yield make
     for dlg in made:
-        dlg.close()
+        # done() closes without reject(), so a window left with changes
+        # never asks "Discard your changes?" during teardown.
+        dlg.done(0)
         dlg.deleteLater()
     qapp.processEvents()

@@ -220,7 +220,7 @@ def _result(**kw):
     return ImportResult(**base)
 
 
-FIXED = [("Tags", "Replaced with the update's"), ("Review history and deck moves", "Unchanged")]
+FIXED = [("Tags", "Replaced with the update's"), ("Your existing cards: review history and decks", "Unchanged")]
 COUNTS = [("Notes updated", "6"), ("New notes added", "2"),
           ("Fields kept from your version", "4"), ("Protected tags kept", "1")]
 
@@ -269,7 +269,7 @@ def test_summary_rows_learning_progress_only_when_imported():
 
 def test_summary_dialog_learning_progress_row(summary):
     dlg = summary(_result(learning_progress_imported=True, cards_with_progress=5))
-    assert _texts(dlg, "row_label")[-2:] == ["Review history and deck moves", "New cards with learning progress"]
+    assert _texts(dlg, "row_label")[-2:] == ["Your existing cards: review history and decks", "New cards with learning progress"]
     assert _texts(dlg, "row_value")[-2:] == ["Unchanged", "5"]
 
 
@@ -390,3 +390,64 @@ def test_summary_tab_chain_and_names(summary):
     rows = dlg.findChildren(QWidget, "summary_row")
     assert all(r.accessibleName() for r in rows)
     assert len(rows) == len(dlg.rows())
+
+
+# --------------------------------------------------------------------------
+# After the real-Anki pass (17 Nov 2026)
+
+
+def test_question_same_size_before_and_after_change_choices(question, qapp):
+    """Fix 1: the first layout is the final one: "Change choices…" returning
+    the same rows changes neither size nor spacing; with more or fewer rows
+    only the height changes, and going back gives the first size again."""
+    import dataclasses
+
+    from special_fields_by_ankoma.config import default_settings as ds
+
+    more = ROWS + [("Extra row", "value")]
+    answers = [ROWS, more, ROWS]
+    dlg = question(change=lambda: answers.pop(0))
+    first = dlg.size()
+    gap = dlg.sync_note.geometry().top() - dlg.keep_note.geometry().bottom()
+    assert first.width() == 540
+    # No slack: the height is what the layout needs at this width.
+    assert first.height() == dlg.layout().totalHeightForWidth(first.width())
+    QTest.mouseClick(dlg.change_button, Qt.MouseButton.LeftButton)
+    qapp.processEvents()
+    assert dlg.size() == first
+    assert dlg.sync_note.geometry().top() - dlg.keep_note.geometry().bottom() == gap
+    QTest.mouseClick(dlg.change_button, Qt.MouseButton.LeftButton)
+    qapp.processEvents()
+    assert dlg.width() == first.width() and dlg.height() > first.height()
+    assert dlg.sync_note.geometry().top() - dlg.keep_note.geometry().bottom() == gap
+    QTest.mouseClick(dlg.change_button, Qt.MouseButton.LeftButton)
+    qapp.processEvents()
+    assert dlg.size() == first
+    # A different saved-choices text (longer values) still fits exactly.
+    on = choices_summary(dataclasses.replace(ds(), import_scheduling=True))
+    dlg2 = question(rows=on)
+    assert dlg2.height() == dlg2.layout().totalHeightForWidth(dlg2.width())
+
+
+def test_summary_for_new_deck_says_import_complete_without_zero_kept_rows(summary):
+    """Fix 5: nothing updated (a deck new to the collection)."""
+    r = _result(notes_updated=0, notes_added=5, fields_kept=0, protected_tags_kept=0)
+    assert flow.summary_heading(r) == "Import complete"
+    assert flow.summary_rows(r) == [("Notes updated", "0"), ("New notes added", "5")] + FIXED
+    dlg = summary(r)
+    assert dlg.findChild(QLabel, "summary_heading").text() == "Import complete"
+    assert "Fields kept from your version" not in _texts(dlg, "row_label")
+    assert "Protected tags kept" not in _texts(dlg, "row_label")
+
+
+def test_summary_keeps_zero_kept_rows_when_notes_were_updated(summary):
+    r = _result(notes_updated=3, fields_kept=0, protected_tags_kept=0)
+    assert flow.summary_heading(r) == "Update complete"
+    labels = [x[0] for x in flow.summary_rows(r)]
+    assert "Fields kept from your version" in labels and "Protected tags kept" in labels
+    assert summary(r).findChild(QLabel, "summary_heading").text() == "Update complete"
+
+
+def test_summary_existing_cards_row_renamed():
+    assert flow.FIXED_SUMMARY_ROWS[-1] == ("Your existing cards: review history and decks", "Unchanged")
+    assert all("deck moves" not in label for label, _v in flow.summary_rows(_result()))

@@ -37,6 +37,7 @@ import os
 import re
 import sys
 import traceback
+import zipfile
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from aqt.qt import *  # noqa: F401,F403  (PyQt6 via aqt)
@@ -63,13 +64,26 @@ CHANGE_LABEL = "Change choices…"
 STANDARD_LABEL = "Use Anki's standard import"
 
 SUMMARY_HEADING = "Update complete"
+# When the import updated no note (a deck new to the collection).
+SUMMARY_HEADING_NEW = "Import complete"
 SKIPPED_LABEL = "Notes skipped"
 UNCHANGED_REASON = "unchanged"
+EXISTING_CARDS_LABEL = "Your existing cards: review history and decks"
 FIXED_SUMMARY_ROWS: Tuple[Tuple[str, str], ...] = (
     ("Tags", "Replaced with the update's"),
-    ("Review history and deck moves", "Unchanged"),
+    (EXISTING_CARDS_LABEL, "Unchanged"),
 )
+# Rows left out when they are 0 and no note was updated (nothing to keep).
+KEPT_LABELS = ("Fields kept from your version", "Protected tags kept")
 PROGRESS_LABEL = "New cards with learning progress"
+# Anki's progress window while the update runs (label and window title).
+PROGRESS_TEXT = "Updating with Special Fields by Ankoma…"
+# A file that is not a readable zip holding an Anki collection: checked
+# before the backup, so nothing is backed up and nothing is imported.
+INVALID_FILE_WARNING = "Nothing was imported. This file isn't a valid Anki package, or it is damaged."
+# A file that passed that check but Anki's importer still could not read.
+UNREADABLE_FILE_LEAD = "Nothing was imported. Anki couldn't read this file:"
+PACKAGE_COLLECTION_NAMES = ("collection.anki21b", "collection.anki21", "collection.anki2")
 FULL_SYNC_NOTICE = (
     "This update changed a note type, so your next sync will be a one-way "
     "full sync. Choose “Upload to AnkiWeb” so this computer's "
@@ -127,11 +141,15 @@ def summary_rows(result: ImportResult) -> List[Tuple[str, str]]:
 
     `ImportResult.summary_rows()` without its "Notes skipped" row; a
     "Notes skipped" row is added back only when reasons other than
-    "unchanged" add up to more than zero, with that sum. Then the fixed rows,
-    and, only when learning progress was imported, how many new cards
-    arrived with it.
+    "unchanged" add up to more than zero, with that sum. When no note was
+    updated, "Fields kept from your version" and "Protected tags kept" are
+    left out if they are 0 (with notes updated they stay, even at 0). Then
+    the fixed rows, and, only when learning progress was imported, how many
+    new cards arrived with it.
     """
     rows = [r for r in result.summary_rows() if r[0] != SKIPPED_LABEL]
+    if not result.notes_updated:
+        rows = [r for r in rows if not (r[0] in KEPT_LABELS and r[1] == "0")]
     skipped = sum(n for _reason, n in skip_details(result))
     if skipped > 0:
         rows.append((SKIPPED_LABEL, str(skipped)))
@@ -139,6 +157,36 @@ def summary_rows(result: ImportResult) -> List[Tuple[str, str]]:
     if result.learning_progress_imported:
         rows.append((PROGRESS_LABEL, str(result.cards_with_progress)))
     return rows
+
+
+def summary_heading(result: ImportResult) -> str:
+    """"Update complete", or "Import complete" when no note was updated."""
+    return SUMMARY_HEADING if result.notes_updated else SUMMARY_HEADING_NEW
+
+
+def looks_like_apkg(path: str) -> bool:
+    """A cheap check that `path` is a readable zip with an Anki collection
+    in it. Reads only the zip's directory, never the whole file."""
+    try:
+        if not zipfile.is_zipfile(path):
+            return False
+        with zipfile.ZipFile(path) as z:
+            names = set(z.namelist())
+    except Exception:
+        return False
+    return any(n in names for n in PACKAGE_COLLECTION_NAMES)
+
+
+def _failed_in_native_import(exc: BaseException) -> bool:
+    """True if `exc` was raised by Anki's own package importer
+    (`Collection.import_anki_package`), not by the add-on's later steps."""
+    tb = exc.__traceback__
+    while tb is not None:
+        code = tb.tb_frame.f_code
+        if code.co_name == "import_anki_package" and os.path.basename(code.co_filename) == "collection.py":
+            return True
+        tb = tb.tb_next
+    return False
 
 
 def skip_details(result: ImportResult) -> List[Tuple[str, int]]:
@@ -295,12 +343,30 @@ class QuestionDialog(QDialog):
         self._choice = CHOICE_CANCEL
         self._colors = _Colors(self.palette())
         self._rows: List[Tuple[str, str]] = []
+        self._width = 540
+        self.setMinimumWidth(500)
         self._build()
         self.set_rows(rows)
-        self.setMinimumWidth(500)
-        self.resize(540, self.sizeHint().height())
 
     # ----- construction -------------------------------------------------
+
+    def _fit(self) -> None:
+        """Height for the current width, from the layout's height-for-width
+        (word-wrapped labels), the same way the first time and after
+        "Change choices…", so the spacing never changes. The width stays
+        540 px unless the user resized the window."""
+        if self.isVisible():
+            self._width = self.width()
+        self.ensurePolished()
+        # The rows box first: its cached height must not be the old one.
+        inner = self.choices_box.layout()
+        inner.invalidate()
+        inner.activate()
+        lay = self.layout()
+        lay.invalidate()
+        lay.activate()
+        height = lay.totalHeightForWidth(self._width)
+        self.resize(self._width, max(height, lay.totalMinimumSize().height()))
 
     def _build(self) -> None:
         c = self._colors
@@ -415,7 +481,7 @@ class QuestionDialog(QDialog):
         self.choices_box.setAccessibleDescription(
             "; ".join("%s: %s" % r for r in self._rows)
         )
-        self.adjustSize()
+        self._fit()
 
     def choice(self) -> str:
         return self._choice
@@ -474,7 +540,7 @@ class SummaryDialog(QDialog):
 
         top = QVBoxLayout()
         top.setSpacing(6)
-        self.heading = _heading(SUMMARY_HEADING, self, "summary_heading")
+        self.heading = _heading(summary_heading(self.result_data), self, "summary_heading")
         top.addWidget(self.heading)
         self.file_label = None  # type: Optional[QLabel]
         if self.file_name:
@@ -682,17 +748,21 @@ def run_import_with_choices(mw: Any, path: str, settings: Settings) -> None:
     unchanged) and one it could not roll back (`engine.RollbackFailedError`,
     rule 13; the text depends on whether the pre-import backup was made)
     get a plain warning; every other error goes to Anki's normal error
-    dialog, as before."""
+    dialog, as before.
+
+    A file that is not a readable zip with an Anki collection in it is
+    refused before anything happens (no backup, no import), with a plain
+    warning. If Anki's importer still cannot read a file that passed that
+    check, the warning quotes Anki's message."""
     from aqt.operations import CollectionOp
 
     from . import engine
 
-    try:
-        from aqt.import_export.importing import import_progress_update
-    except Exception:  # pragma: no cover - present on 25.02 and 26.09
-        import_progress_update = None
-
     file_name = os.path.basename(path)
+    if not looks_like_apkg(path):
+        show_invalid_file_warning(mw, file_name)
+        return
+
     backup_folder = _backup_folder(mw)  # read on the main thread
 
     backup = {"made": False}
@@ -713,14 +783,46 @@ def run_import_with_choices(mw: Any, path: str, settings: Settings) -> None:
         if isinstance(exc, engine.MergeRepairError):
             show_merge_repair_warning(mw)
             return
+        if _failed_in_native_import(exc):
+            # Anki's importer could not read the file. Rules 12 and 13 are
+            # unchanged; this text claims nothing about a rollback.
+            show_unreadable_file_warning(mw, exc)
+            return
         # What CollectionOp does itself when no failure handler is given.
         import aqt.operations
 
         aqt.operations.show_exception(parent=mw, exception=exc)
 
     CollectionOp(parent=mw, op=op).success(on_success).failure(on_failure).with_backend_progress(
-        import_progress_update
+        _progress_update
     ).run_in_background()
+    _set_progress_title(mw)
+
+
+def _progress_update(progress: Any, update: Any) -> None:
+    """Backend progress callback: Anki's own import progress (so Cancel still
+    aborts), but the label always says what is running."""
+    try:
+        from aqt.import_export.importing import import_progress_update
+
+        import_progress_update(progress, update)
+    except Exception:
+        if getattr(update, "user_wants_abort", False):
+            update.abort = True
+    try:
+        update.label = PROGRESS_TEXT
+    except Exception:
+        pass
+
+
+def _set_progress_title(mw: Any) -> None:
+    """Name the progress window, which CollectionOp has just opened (on
+    every supported version the window exists once `run_in_background`
+    returns). Anki's default title stays if this API is missing."""
+    try:
+        mw.progress.set_title(ADDON_NAME)
+    except Exception:
+        pass
 
 
 def _backup_folder(mw: Any) -> Optional[str]:
@@ -758,6 +860,30 @@ def show_merge_repair_warning(mw: Any) -> None:
 
     showWarning(
         MERGE_REPAIR_WARNING,
+        parent=mw if isinstance(mw, QWidget) else None,
+        title=ADDON_NAME,
+        textFormat="plain",
+    )
+
+
+def show_invalid_file_warning(mw: Any, file_name: str) -> None:
+    """The file is not an Anki package (or is damaged): nothing was done."""
+    from aqt.utils import showWarning
+
+    showWarning(
+        "%s\n\nFile: %s" % (INVALID_FILE_WARNING, file_name),
+        parent=mw if isinstance(mw, QWidget) else None,
+        title=ADDON_NAME,
+        textFormat="plain",
+    )
+
+
+def show_unreadable_file_warning(mw: Any, exc: BaseException) -> None:
+    """Anki's importer failed on a file that looked like a package."""
+    from aqt.utils import showWarning
+
+    showWarning(
+        "%s\n\n%s" % (UNREADABLE_FILE_LEAD, str(exc).strip() or type(exc).__name__),
         parent=mw if isinstance(mw, QWidget) else None,
         title=ADDON_NAME,
         textFormat="plain",

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import dataclasses
 
+import pytest
+
 from PyQt6.QtTest import QTest
 
 from aqt.qt import QDialog, QPalette, QColor, QApplication, QWidget, QPushButton, Qt
@@ -593,9 +595,17 @@ def test_every_control_reachable_by_tab(make_dialog):
               dlg.styling_switch, dlg.scheduling_switch, dlg.presets_switch, dlg.restore_button, dlg.cancel_button, dlg.save_button,
               dlg.row_for("Remarks").remove_button, dlg.tag_chips()[0].remove_button]
     for row in dlg.field_rows():
-        wanted += [row.toggle.keep_button, row.toggle.take_button]
+        # Each toggle is an exclusive button group: once it has had focus
+        # (the first row has it on opening), Qt keeps only its selected side
+        # as a Tab stop and Left/Right switch sides, like radio buttons. The
+        # selected side is always a Tab stop.
+        wanted.append(row.toggle.selected_button())
     for x in wanted:
         assert id(x) in tabbable, x.objectName()
+    first = dlg.field_rows()[0].toggle
+    first.selected_button().setFocus()
+    QTest.keyClick(first.selected_button(), Qt.Key.Key_Left)
+    assert dlg.focusWidget() is first.keep_button and first.keep()
 
 
 def test_colours_follow_dark_palette(qapp):
@@ -673,6 +683,7 @@ def test_markup_in_field_name_and_tag_is_shown_literally(make_dialog):
     dlg._field_enter()
     assert dlg.field_hint.textFormat() == Qt.TextFormat.PlainText
     assert dlg.row_for("<s>other</s>").label.text() == "<s>other</s>"
+    type_into(dlg.field_search, "<s>other</s>")  # already a row: the hint echoes it
     assert "<s>other</s>" in dlg.field_hint.text()
     # nothing in the window is rich text
     for lab in dlg.findChildren(QLabel):
@@ -681,3 +692,253 @@ def test_markup_in_field_name_and_tag_is_shown_literally(make_dialog):
     dlg.accept()
     out = dlg.result_settings()
     assert FieldChoice(field, True) in out.fields and tag in out.protected_tags
+
+
+# --------------------------------------------------------------------------
+# After the real-Anki pass (17 Nov 2026)
+
+LONG_TAG = "#ANKOMA::CP::Immunology::Autoimmunity::AutoImmuneDiseases::FamilialMediterraneanFever"
+
+
+def test_tag_list_has_no_horizontal_scrollbar_and_elides_long_tags(make_dialog, qapp):
+    """Fix 2: no horizontal scroll bar; a long tag is elided in the middle
+    (start and leaf readable), its tooltip is the full tag, and the tag
+    added is the full tag."""
+    tags = ["#edit", "#edited", "#edited::images"] + [LONG_TAG + str(i) for i in range(8)]
+    dlg = make_dialog(tags=tags)
+    type_into(dlg.tag_input, "e")
+    qapp.processEvents()
+    lst = dlg.tag_list
+    assert lst.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert not lst.horizontalScrollBar().isVisible()
+    assert lst.textElideMode() == Qt.TextElideMode.ElideMiddle
+    vp = lst.viewport().rect()
+    # every row is no wider than the list, and the visible ones are whole
+    for i in range(lst.count()):
+        rect = lst.visualItemRect(lst.item(i))
+        assert rect.width() <= vp.width()
+    for i in range(min(lst.count(), 8)):
+        rect = lst.visualItemRect(lst.item(i))
+        assert vp.contains(rect), (i, rect, vp)
+    long_items = [lst.item(i) for i in range(lst.count()) if lst.item(i).text().startswith(LONG_TAG)]
+    assert long_items
+    item = long_items[0]
+    assert item.text() == LONG_TAG + item.text()[-1]  # the row's text is the full tag
+    assert _shown_tooltip(item.toolTip()) == item.text()
+    fm = lst.fontMetrics()
+    assert fm.horizontalAdvance(item.text()) > vp.width()  # really needs eliding
+    full = item.text()
+    click_item(lst, full)
+    assert dlg.protected_tags() == [full]
+
+
+def test_field_list_has_no_horizontal_scrollbar(make_dialog):
+    long_field = "A very long field name " * 6
+    dlg = make_dialog(fields=["Text", long_field])
+    dlg.open_field_picker()
+    lst = dlg.field_matches
+    assert lst.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    item = lst.findItems(long_field, Qt.MatchFlag.MatchExactly)[0]
+    assert lst.visualItemRect(item).width() <= lst.viewport().width()
+    assert _shown_tooltip(item.toolTip()) == long_field
+    click_item(lst, long_field)
+    assert dlg.row_for(long_field) is not None
+
+
+def test_window_grows_for_the_tag_list_and_shrinks_back(make_dialog, qapp):
+    """Fix 3: the list opening grows the window (no scroll bar, heading in
+    view, top-left unchanged); closing it shrinks back to the opening size,
+    never below it; never above 90% of the screen height. (Two rows, so
+    the window starts below the cap on the small offscreen screen.)"""
+    few = dataclasses.replace(default_settings(), fields=default_settings().fields[:2])
+    dlg = make_dialog(settings=few)
+    dlg.move(10, 10)  # room below: the bottom screen edge is a cap too
+    qapp.processEvents()
+    assert dlg.height() < int(dlg.screen().availableGeometry().height() * 0.9)
+    qapp.processEvents()
+    pos, h0 = dlg.pos(), dlg.height()
+    type_into(dlg.tag_input, "board")
+    qapp.processEvents()
+    assert dlg.tag_list.isVisible()
+    assert dlg.height() > h0
+    assert dlg.pos() == pos
+    assert dlg.scroll.verticalScrollBar().maximum() == 0
+    assert dlg.scroll.verticalScrollBar().value() == 0
+    scr = dlg.screen().availableGeometry()
+    assert dlg.height() <= int(scr.height() * 0.9)
+    dlg.tag_input.clear()
+    qapp.processEvents()
+    assert not dlg.tag_list.isVisible()
+    assert dlg.height() == h0
+    # a size the user chose is the new floor
+    dlg.resize(dlg.width(), h0 + 120)
+    qapp.processEvents()
+    dlg.open_field_picker()
+    qapp.processEvents()
+    dlg.close_field_picker()
+    qapp.processEvents()
+    assert dlg.height() == h0 + 120
+
+
+def test_window_never_grows_past_the_screen_bottom(make_dialog, qapp):
+    dlg = make_dialog(settings=dataclasses.replace(default_settings(), fields=()))
+    scr = dlg.screen().availableGeometry()
+    dlg.move(10, scr.bottom() - dlg.frameGeometry().height() - 20)
+    qapp.processEvents()
+    top = dlg.frameGeometry().top()
+    dlg.open_field_picker()
+    qapp.processEvents()
+    assert dlg.frameGeometry().top() == top
+    assert dlg.frameGeometry().bottom() <= scr.bottom()
+
+
+def test_no_scrollbar_left_after_adding_a_field_and_closing_the_picker(make_dialog, qapp):
+    """Seen in the real app: the window was at its cap while the picker was
+    open (scroll bar showing); after a field was added and the picker
+    closed, the window must fit without a leftover scroll bar."""
+    dlg = make_dialog(settings=dataclasses.replace(default_settings(), fields=default_settings().fields[:2]))
+    dlg.move(10, 10)
+    qapp.processEvents()
+    dlg.open_field_picker()
+    qapp.processEvents()
+    dlg._add_field_from_list("Remarks")
+    qapp.processEvents()
+    dlg.close_field_picker()
+    qapp.processEvents()
+    assert dlg.scroll.verticalScrollBar().maximum() == 0
+
+
+def test_field_picker_grows_the_window(make_dialog, qapp):
+    dlg = make_dialog(settings=dataclasses.replace(default_settings(), fields=()))
+    dlg.move(10, 10)
+    qapp.processEvents()
+    h0 = dlg.height()
+    dlg.open_field_picker()
+    qapp.processEvents()
+    assert dlg.height() > h0
+    assert dlg.scroll.verticalScrollBar().maximum() == 0
+
+
+def test_initial_focus_on_first_row_toggle(make_dialog, qapp):
+    """Fix 7: focus starts on the first row's toggle (its selected side),
+    or on "+ Add field" when there are no rows; never the tag box."""
+    dlg = make_dialog()
+    qapp.processEvents()
+    first = dlg.field_rows()[0].toggle
+    assert dlg.focusWidget() is first.selected_button()
+    QTest.keyClick(dlg.focusWidget(), Qt.Key.Key_Tab)
+    assert dlg.focusWidget() is not dlg.scroll
+    empty = make_dialog(settings=dataclasses.replace(default_settings(), fields=()))
+    qapp.processEvents()
+    assert empty.focusWidget() is empty.add_field_button
+    assert empty.focusWidget() is not empty.tag_input
+
+
+def test_no_message_after_adding_a_field(make_dialog):
+    """Fix 9: like the tag picker, nothing is said after a field is added;
+    hints that report a problem stay."""
+    dlg = make_dialog()
+    dlg.open_field_picker()
+    type_into(dlg.field_search, "Remarks")
+    QTest.keyClick(dlg.field_search, Qt.Key.Key_Return)
+    assert dlg.row_for("Remarks") is not None
+    assert dlg.field_hint.text() == "" and not dlg.field_hint.isVisible()
+    type_into(dlg.field_search, "Remarks")
+    assert dlg.field_hint.isVisible() and "already in the list" in dlg.field_hint.text()
+
+
+# ----- fix 8: "Discard your changes?" ---------------------------------------
+
+
+@pytest.fixture
+def discard_answers(monkeypatch):
+    from special_fields_by_ankoma import settings_dialog as sd
+
+    state = {"answer": False, "asked": 0}
+
+    def fake(parent):
+        state["asked"] += 1
+        return state["answer"]
+
+    monkeypatch.setattr(sd, "confirm_discard", fake)
+    return state
+
+
+def test_unchanged_escape_closes_without_question(make_dialog, discard_answers):
+    dlg = make_dialog()
+    dlg.row_for("Text").toggle.set_keep(True)
+    dlg.row_for("Text").toggle.set_keep(False)  # changed back: unchanged
+    QTest.keyClick(dlg, Qt.Key.Key_Escape)
+    assert not dlg.isVisible() and discard_answers["asked"] == 0
+
+
+@pytest.mark.parametrize("how", ["escape", "cancel", "close_box"])
+def test_changed_asks_keep_editing_then_discard(make_dialog, discard_answers, how):
+    dlg = make_dialog()
+    dlg.row_for("Text").toggle.set_keep(True)
+    dlg.styling_switch.setChecked(False)
+    changed = dlg.result_settings()
+
+    def close():
+        if how == "escape":
+            QTest.keyClick(dlg, Qt.Key.Key_Escape)
+        elif how == "cancel":
+            QTest.mouseClick(dlg.cancel_button, Qt.MouseButton.LeftButton)
+        else:
+            dlg.close()
+
+    discard_answers["answer"] = False  # "Keep editing"
+    close()
+    assert discard_answers["asked"] == 1
+    assert dlg.isVisible() and dlg.result_settings() == changed
+    discard_answers["answer"] = True  # "Discard"
+    close()
+    assert discard_answers["asked"] == 2
+    assert not dlg.isVisible()
+    assert dlg.result() == QDialog.DialogCode.Rejected.value
+
+
+def test_save_never_asks(make_dialog, discard_answers):
+    dlg = make_dialog()
+    dlg.row_for("Text").toggle.set_keep(True)
+    QTest.mouseClick(dlg.save_button, Qt.MouseButton.LeftButton)
+    assert discard_answers["asked"] == 0
+    assert dlg.result() == QDialog.DialogCode.Accepted.value
+
+
+def test_escape_in_search_box_still_clears_first(make_dialog, discard_answers):
+    dlg = make_dialog()
+    dlg.row_for("Text").toggle.set_keep(True)
+    type_into(dlg.tag_input, "board")
+    QTest.keyClick(dlg.tag_input, Qt.Key.Key_Escape)
+    assert dlg.tag_input.text() == "" and dlg.isVisible() and discard_answers["asked"] == 0
+
+
+@pytest.mark.parametrize("button", ["keep_editing_button", "discard_button"])
+def test_real_discard_question_box(make_dialog, qapp, button):
+    """The real box, answered from a timer: PlainText, title, two buttons,
+    "Keep editing" is the default and the Esc button."""
+    from aqt.qt import QMessageBox, QTimer
+
+    dlg = make_dialog()
+    dlg.row_for("Text").toggle.set_keep(True)
+    seen = {}
+
+    def answer():
+        box = QApplication.activeModalWidget()
+        if not isinstance(box, QMessageBox):
+            QTimer.singleShot(10, answer)
+            return
+        seen.update(title=box.windowTitle(), text=box.text(), fmt=box.textFormat(),
+                    buttons=sorted(b.text() for b in box.buttons()),
+                    default=box.defaultButton().objectName(),
+                    escape=box.escapeButton().objectName(), name=box.objectName())
+        QTest.mouseClick(box.findChild(QPushButton, button), Qt.MouseButton.LeftButton)
+
+    QTimer.singleShot(0, answer)
+    QTest.keyClick(dlg, Qt.Key.Key_Escape)
+    assert seen == dict(title="Special Fields by Ankoma", text="Discard your changes?",
+                        fmt=Qt.TextFormat.PlainText, buttons=["Discard", "Keep editing"],
+                        default="keep_editing_button", escape="keep_editing_button",
+                        name="discard_question")
+    assert dlg.isVisible() == (button == "keep_editing_button")

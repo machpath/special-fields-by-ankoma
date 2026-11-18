@@ -63,6 +63,7 @@ Uploading replaces what's on AnkiWeb. If you studied on another device and hadn'
 - A cloze note can't be turned into a non-cloze note (or the reverse) by an update. Anki refuses that, and nothing is imported.
 - If you added a field of your own to a note type, Anki's standard import won't update that note type's notes. "Import with my choices" will.
 - If you keep your own Text on a cloze note and the update adds a new cloze number to it, Anki creates a card with nothing to show. Remove it with **Tools → Empty Cards**.
+- When an update removes a cloze from a note you already have, Anki keeps the old card as an empty card. The add-on leaves these alone; you can clear them with **Tools → Empty Cards**.
 - Deck option presets stored inside an `.apkg` are imported only when **Import deck options** is on. Undo puts your decks back on the presets they used before.
 - Notes that a new release removed are not deleted from your collection.
 - Review history stored inside an `.apkg` is imported only when **Import learning progress** is on, and only for cards that are new to your collection.
