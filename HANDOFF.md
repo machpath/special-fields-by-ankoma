@@ -143,6 +143,10 @@ Also from the author: the tag search order (shortest match first, "#edit" before
 6. How to run the real Anki app here again: see /tmp/sfa-real/gui/scr (may be gone in a new workspace). Needs `apt install openbox x11-utils libxcb-cursor0 libxcb-icccm4` and friends, `Xvfb :99 -screen 0 1440x960x24 &`, `DISPLAY=:99 openbox &`, env `QT_QPA_PLATFORM=xcb ANKI_NOHIGHDPI=1 QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox --disable-gpu" QTWEBENGINE_DISABLE_SANDBOX=1`, a base folder with `prefs21.db` prepared, and a small driver add-on that steps a generator from a QTimer and uses QTest clicks.
 7. The author's two files (Ankoma1 = current collection, Ankoma2 = newest release) were attached in the chat and are private: they are NOT in the repository. Ask the author for them again if the workspace no longer has /tmp/sfa-real/in.
 
+### Approved on 17 Nov 2026, late evening, and being built: a field table per protected tag, and (i) bubbles
+
+The author tried beta 8 and asked for a different shape for the per-tag feature: each protected tag gets its own collapsible Keep mine / Take the update's table (replacing the chips), a tag's table can switch OFF a field the main list keeps, a new tag starts from the previous tag's choices plus the main list's kept fields, and (i) bubbles replace the grey explanatory text. The full approved design is in `docs/DESIGN_TAG_TABLES.md`. If no later commit says it is built, it is not: give that file to one worker, then verify with the full matrix, the author's files and the real app.
+
 ### Next steps
 
 1. Manual pass in desktop Anki on a COPY of the author's profile, with the author's go-ahead: install `builds/special_fields_by_ankoma-0.1.0-beta8.ankiaddon` (Tools → Add-ons → Install from file), then check: the Tools menu item; the settings window; the question on double-click, drag-and-drop and File → Import; progress; the summary; Edit → Undo label; a backup appears in the profile's backups folder; sync.
