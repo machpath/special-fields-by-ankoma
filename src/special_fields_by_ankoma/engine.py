@@ -11,8 +11,10 @@ note, then puts back what the user chose to keep:
 3. run the native importer (`update_notes=ALWAYS`, `merge_notetypes=True`,
    `update_notetypes=ALWAYS/NEVER`);
 4. clear pylib's note-type cache (a backend import does not invalidate it);
-5. restore, on the notes the importer reports as updated, kept fields,
-   fields the update has no content for (rule 9) and protected tags (one
+5. restore, on the notes the importer reports as updated, kept fields
+   (the "Keep mine" fields plus those of the protected tags the note
+   carried, rule 14), fields the update has no content for (rule 9) and
+   protected tags (one
    batched `update_notes`); a note whose note type changed ("moved", rule
    10a) is restored by field name on its new note type;
 6. clean up what Anki's forced note type merge leaves behind (rule 10b, see
@@ -34,7 +36,7 @@ import re
 import shutil
 import tempfile
 import time
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
 
 from anki.collection import (
     Collection,
@@ -374,7 +376,8 @@ def _restore_notes(
     added_ids: Sequence[int],
     res: ImportResult,
 ) -> None:
-    """Kept fields, rule 9 and protected tags on the updated notes.
+    """Kept fields (rule 2, and per protected tag, rule 14), rule 9 and
+    protected tags on the updated notes.
 
     A note whose note type id changed in the import ("moved", rule 10a) is
     restored by field NAME on its new note type, so a value never lands in
@@ -386,6 +389,10 @@ def _restore_notes(
         return
     touched: Set[int] = updated.union(added_ids)
     kept = settings.kept_field_names()
+    # Rule 14: fields kept per protected tag, decided by the note's tags
+    # before the import. None when no protected tag keeps a field (the
+    # common case: every note then keeps exactly `kept`).
+    kept_for = _tag_rule_lookup(settings)
     listed = frozenset(norm_field(f.name) for f in settings.fields)
     protects = settings.protects_tag
     want_tags = any(norm_tag(t) for t in settings.protected_tags)
@@ -422,17 +429,22 @@ def _restore_notes(
         old_fields = snap.fields.get(old_mid, [])
         writes: Dict[int, str] = {}
         candidates = no_content.get(mid, ())
-        if (kept or candidates) and old_fields:
+        note_kept, keep_all = (kept, False) if kept_for is None else kept_for(old_tags)
+        if (note_kept or keep_all or candidates) and old_fields:
             key = (old_mid, mid)
             fmap = maps.get(key)
             if fmap is None:
                 fmap = maps[key] = _field_map(old_fields, post_fields.get(mid, []), moved=old_mid != mid)
             old_vals = old_flds.split("\x1f")
-            # "Keep mine": each kept pre-import field, followed to where it is now.
-            if kept:
+            # "Keep mine" (and the fields of the protected tags the note
+            # carried, rule 14): each kept pre-import field, followed to
+            # where it is now. "Every field" keeps every pre-import field; a
+            # field new to the note has no pre-import value and keeps the
+            # update's.
+            if note_kept or keep_all:
                 for i, (_fid, name) in enumerate(old_fields):
                     idx = fmap[i]
-                    if name not in kept or idx is None or i >= len(old_vals) or idx >= len(vals):
+                    if (not keep_all and name not in note_kept) or idx is None or i >= len(old_vals) or idx >= len(vals):
                         continue
                     if vals[idx] != old_vals[i]:
                         writes[idx] = old_vals[i]
@@ -476,6 +488,53 @@ def _restore_notes(
             res.notes_with_tags_kept += 1
     if to_save:
         col.update_notes(to_save)
+
+
+def _tag_rule_lookup(settings: Settings) -> Optional[Callable[[str], Tuple[FrozenSet[str], bool]]]:
+    """Rule 14: a function from a note's raw pre-import tag string to
+    (normalized kept field names, keep every field), or None when no
+    protected tag keeps a field. Results are cached per tag string and per
+    tag, so the cost grows with the number of distinct tags, not notes."""
+    rules = [
+        (norm_tag(r.tag), frozenset(norm_field(f) for f in r.keep_fields if norm_field(f)), r.keep_all)
+        for r in settings.active_tag_rules()
+    ]
+    rules = [r for r in rules if r[0]]
+    if not rules:
+        return None
+    base = settings.kept_field_names()
+    none: Tuple[FrozenSet[str], bool] = (base, False)
+    per_tag: Dict[str, Tuple[FrozenSet[str], bool]] = {}
+    per_string: Dict[str, Tuple[FrozenSet[str], bool]] = {}
+
+    def for_tag(tag: str) -> Tuple[FrozenSet[str], bool]:
+        key = norm_tag(tag)
+        got = per_tag.get(key)
+        if got is None:
+            names: Set[str] = set()
+            every = False
+            for rtag, rfields, rall in rules:
+                # the same test as model.is_protected_tag: the tag or a sub-tag
+                if key == rtag or key.startswith(rtag + "::"):
+                    names |= rfields
+                    every = every or rall
+            got = per_tag[key] = (frozenset(names), every)
+        return got
+
+    def lookup(raw_tags: str) -> Tuple[FrozenSet[str], bool]:
+        got = per_string.get(raw_tags)
+        if got is None:
+            names: Set[str] = set(base)
+            every = False
+            for tag in raw_tags.split():
+                extra, all_ = for_tag(tag)
+                names |= extra
+                every = every or all_
+            got = none if (not every and len(names) == len(base)) else (frozenset(names), every)
+            per_string[raw_tags] = got
+        return got
+
+    return lookup
 
 
 # --- notes the import did not update (rule 12 G1, C1) ----------------------------------

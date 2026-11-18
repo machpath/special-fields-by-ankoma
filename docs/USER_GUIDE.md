@@ -10,11 +10,29 @@ It runs in Anki on a computer (Windows, Mac or Linux), Anki 25.02 or newer. Phon
 
 1. Open **Tools → Special Fields by Ankoma**.
 2. **Fields.** For each field, pick **Keep mine** or **Take the update's**. Out of the box, only Personal Notes is kept. Use **+ Add field** to add any other field from your note types, and the **✕** beside a field to take it off the list. The starting fields are only suggestions: remove any your decks don't use. A field that isn't listed takes the update's content. One exception protects you: if the update leaves a field empty on every card of a note type (a personal notes field, for example), your text in that field stays even when the field isn't listed.
-3. **Protected tags.** Start typing a tag you already use, then click it in the list, or press Enter to add the highlighted one. An update never removes a protected tag from your notes. Protecting `#edited` also protects its sub-tags, such as `#edited::images`.
+3. **Protected tags.** Start typing a tag you already use, then click it in the list, or press Enter to add the highlighted one. An update never removes a protected tag from your notes. Protecting `#edited` also protects its sub-tags, such as `#edited::images`. A protected tag can also keep extra fields on the cards that have it (see below).
 4. **Update card templates and styling.** On: an update can replace how your cards look. Off: your existing templates and styling are left as they are. A brand-new card type added by an update still arrives.
 5. **Import learning progress** (off unless you turn it on). On: cards that are new to your collection arrive with the scheduling and review history stored in the file. Cards you already have always keep your own progress. Off: new cards arrive as new.
 6. **Import deck options** (off unless you turn it on). Deck options are the settings behind a deck's gear icon: daily limits, learning steps, FSRS settings. Anki saves each set of them as a "preset". On: presets in the file that you don't have yet are added, and the decks in the file switch to the preset the file gives them (a deck the file puts on "Default" keeps yours). Presets you already have are never changed. Off: no presets are imported and no deck changes its preset.
 7. Press **Save**. Your choices are used for every import until you change them.
+
+## Keep extra fields on cards with a tag
+
+Sometimes you want to keep more on some cards than on others. Each protected tag has its own **+ Add field**: the fields you add there are kept on every card that has the tag, on top of the fields you keep everywhere.
+
+Example: Personal Notes is set to **Keep mine**, and everything else to **Take the update's**. You tag the cards you rewrote with `#edited`, protect `#edited`, and add **Text** and **Extra** to it. When you update:
+
+- cards tagged `#edited` keep your Text, Extra and Personal Notes, and get the update's Header, Textbook, Citation and tags (`#edited` stays);
+- every other card keeps only your Personal Notes.
+
+Good to know:
+
+- Sub-tags count: a card tagged `#edited::images` follows the rule of `#edited`.
+- What counts is the tags a card has before the update.
+- A card with several protected tags keeps the fields of all of them.
+- Choose **Every field** in a tag's list to keep everything you have on those cards. A field the update adds that the card didn't have yet still arrives.
+- A tag with no fields added ("Tag only") just keeps the tag, as before.
+- Remove a field, or the whole tag, with its **✕**.
 
 ## Update a deck
 
@@ -32,7 +50,7 @@ The question appears for every `.apkg` you open, including decks that are new to
 
 ## What an update does
 
-- **Fields set to "Take the update's"** get the new content. Fields set to **Keep mine** keep what you had.
+- **Fields set to "Take the update's"** get the new content. Fields set to **Keep mine** keep what you had, and so do the fields you added to a protected tag, on the cards that have that tag.
 - **Fields that aren't in your list** take the update's content. If the update has nothing at all for a field, such as one you added to the note type yourself, yours is left alone. To be certain a field of yours is kept, add it to the list as **Keep mine**.
 - **Tags** on an updated note are replaced with the update's tags. The only tags that stay are the ones you protected. If you want to keep a tag of your own, protect it before you update.
 - **Your review history** is never changed. With **Import learning progress** on, cards that are new to your collection also bring the history stored in the file; the history of cards you already have stays exactly as it was.

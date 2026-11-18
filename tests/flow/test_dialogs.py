@@ -451,3 +451,55 @@ def test_summary_keeps_zero_kept_rows_when_notes_were_updated(summary):
 def test_summary_existing_cards_row_renamed():
     assert flow.FIXED_SUMMARY_ROWS[-1] == ("Your existing cards: review history and decks", "Unchanged")
     assert all("deck moves" not in label for label, _v in flow.summary_rows(_result()))
+
+
+# --------------------------------------------------------------------------
+# Fields kept per protected tag (rule 14) and the summary window's size
+
+
+def test_question_shows_tag_rules_and_long_rows_do_not_widen_it(question, qapp):
+    """The "Protected tags" row says what each tag keeps; a long value wraps
+    without an empty line under it, and a tag too long for a line is elided
+    in the middle (tooltip: the whole value), so the window stays 540 px."""
+    import dataclasses
+
+    from special_fields_by_ankoma.model import TagRule
+
+    tags = ("#edited", "#eevee", "my-private-tag", "board-review")
+    s = dataclasses.replace(default_settings(), protected_tags=tags, tag_rules=(
+        TagRule("#edited", ("Text", "Extra", "Personal Notes", "Header"), False),
+        TagRule("board-review", (), True)))
+    rows = choices_summary(s)
+    value = dict(rows)["Protected tags"]
+    assert value == ("#edited (keeps Text, Extra, Personal Notes, Header), #eevee, "
+                     "my-private-tag, board-review (keeps every field)")
+    dlg = question(rows=rows)
+    assert dlg.width() == 540 and dlg.minimumSizeHint().width() <= 540
+    assert dlg.height() == dlg.layout().totalHeightForWidth(dlg.width())
+    row = [w for w in dlg.findChildren(QWidget, "choice_row") if w.property("label") == "Protected tags"][0]
+    val = row.findChild(QLabel, "choice_value")
+    assert val.text() == value and val.wordWrap()
+    assert row.height() == val.heightForWidth(val.width())  # no empty line under it
+    assert row.height() < 3 * val.fontMetrics().lineSpacing()
+    long_tag = "#ANKOMA::CP::Immunology::Autoimmunity::AutoImmuneDiseases::FamilialMediterraneanFever"
+    s2 = dataclasses.replace(default_settings(), protected_tags=(long_tag,),
+                             tag_rules=(TagRule(long_tag, ("Text",), False),))
+    dlg2 = question(rows=choices_summary(s2))
+    assert dlg2.width() == 540 and dlg2.minimumSizeHint().width() <= 540
+    val2 = [w for w in dlg2.findChildren(QLabel, "choice_value") if "keeps Text" in w.text()][0]
+    assert "…" in val2.text() and val2.text().endswith("(keeps Text)")
+    assert _shown_tooltip(val2.toolTip()) == "%s (keeps Text)" % long_tag
+    assert dlg2.findChild(QWidget, "choices_box").accessibleDescription().count(long_tag) == 1
+
+
+@pytest.mark.parametrize("full_sync", [False, True])
+def test_summary_fits_its_content(summary, full_sync):
+    """The summary window is sized from its layout's height-for-width, so
+    there is no gap above the undo note (only the layout's spacing)."""
+    r = _result(notes_updated=9190, notes_added=10122, fields_kept=606, protected_tags_kept=1020,
+                note_types_changed=full_sync)
+    dlg = summary(r)
+    assert dlg.width() == 540
+    assert dlg.height() == dlg.layout().totalHeightForWidth(540)
+    above = dlg.full_sync_notice if full_sync else dlg.rows_frame
+    assert dlg.undo_note.geometry().top() - above.geometry().bottom() - 1 == dlg.layout().spacing()

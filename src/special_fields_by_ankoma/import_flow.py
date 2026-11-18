@@ -471,10 +471,21 @@ class QuestionDialog(QDialog):
             val = _plain_label(value, row, "choice_value")
             val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
             _with_font(val, 0.0, QFont.Weight.DemiBold)
+            # A word wider than a line (a long hierarchical tag) cannot wrap
+            # and would widen the window: elide it in the middle, like long
+            # tags elsewhere; the tooltip has the whole value.
+            shown = _elide_long_words(value, val.fontMetrics(), _VALUE_WRAP_WIDTH)
+            if shown != value:
+                val.setText(shown)
+                val.setToolTip("<span>%s</span>" % _html_escape(value))
+            # The size policy first: setWordWrap() then marks the label as
+            # height-for-width, so the row is exactly as tall as its wrapped
+            # lines (set the other way round, the row kept the label's own
+            # preferred, narrower and taller, size: an empty line under it).
+            val.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             # Wrap only values too long for one line: a word-wrapped QLabel
             # in a row layout otherwise reserves a second, empty line.
-            val.setWordWrap(val.fontMetrics().horizontalAdvance(value) > _VALUE_WRAP_WIDTH)
-            val.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            val.setWordWrap(val.fontMetrics().horizontalAdvance(shown) > _VALUE_WRAP_WIDTH)
             rl.addWidget(lab, 0, Qt.AlignmentFlag.AlignTop)
             rl.addWidget(val, 1)
             self._rows_layout.addWidget(row)
@@ -529,7 +540,22 @@ class SummaryDialog(QDialog):
         self._rows = summary_rows(result)
         self._build()
         self.setMinimumWidth(500)
-        self.resize(540, self.sizeHint().height())
+        self._fit()
+
+    def _fit(self) -> None:
+        """Height for 540 px from the layout's height-for-width (word-wrapped
+        labels), like `QuestionDialog._fit`: `sizeHint()` measures wrapped
+        labels at a narrower width, which left a large gap above the undo
+        note."""
+        self.ensurePolished()
+        inner = self.rows_frame.layout()
+        inner.invalidate()
+        inner.activate()
+        lay = self.layout()
+        lay.invalidate()
+        lay.activate()
+        height = lay.totalHeightForWidth(540)
+        self.resize(540, max(height, lay.totalMinimumSize().height()))
 
     def _build(self) -> None:
         c = self._colors
@@ -661,6 +687,15 @@ class SummaryDialog(QDialog):
     def reject(self) -> None:
         self._choice = CHOICE_DONE
         super().reject()
+
+
+def _elide_long_words(text: str, fm: QFontMetrics, width: int) -> str:
+    """`text` with every space-separated word wider than `width` elided in
+    the middle (so it fits a line), the rest unchanged."""
+    words = text.split(" ")
+    out = [fm.elidedText(w, Qt.TextElideMode.ElideMiddle, width) if fm.horizontalAdvance(w) > width else w
+           for w in words]
+    return " ".join(out)
 
 
 def _html_escape(text: str) -> str:

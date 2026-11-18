@@ -76,3 +76,33 @@ def test_shipped_config_json_is_the_default_config():
     path = os.path.join(os.path.dirname(c.__file__), "config.json")
     with open(path, encoding="utf-8") as f:
         assert json.load(f) == c.default_config()
+
+
+def test_tag_rules_read_tolerantly():
+    """Rule 14: plain strings (earlier betas) and objects mix; junk falls
+    back to "Tag only"; a tag listed twice keeps its first place and the
+    fields of both entries; "every field" wins over a field list."""
+    s = c.settings_from_config({"protected_tags": [
+        "#eevee",
+        {"tag": " #edited ", "keep_fields": ["Text", " text ", "", 3, "Extra"], "colour": "red"},
+        {"tag": "#bad1", "keep_fields": 5, "keep_all_fields": "maybe"},
+        {"tag": "#all", "keep_fields": ["Text"], "keep_all_fields": "yes"},
+        {"keep_fields": ["Text"]},
+        {"tag": "#EEVEE", "keep_fields": "Header"},
+        {"tag": "#edited", "keep_fields": ["Personal Notes"]},
+    ]})
+    assert s.protected_tags == ("#eevee", "#edited", "#bad1", "#all")
+    assert s.tag_rules == (
+        c.TagRule("#eevee", ("Header",), False),
+        c.TagRule("#edited", ("Text", "Extra", "Personal Notes"), False),
+        c.TagRule("#all", (), True),
+    )
+    assert s.rule_for("#bad1") is None
+    # a single object without the list brackets
+    one = c.settings_from_config({"protected_tags": {"tag": "#x", "keep_all_fields": True}})
+    assert one.protected_tags == ("#x",) and one.rule_for("#X").keep_all
+
+
+def test_tag_only_saved_as_plain_string():
+    s = c.Settings(protected_tags=("#a", "#b"), tag_rules=(c.TagRule("#b", (), False),))
+    assert c.settings_to_config(s)["protected_tags"] == ["#a", "#b"]
