@@ -79,11 +79,11 @@ NO_FIELDS_TEXT = (
 TAGS_HEADING = "Protected tags"
 TAGS_INFO = (
     "An update replaces a card's tags with the update's. A protected tag is never "
-    "removed from your cards; its sub-tags are covered too. Cards with a protected "
-    "tag follow that tag's own field choices instead of the choices above: open a "
-    "tag to set them. A new tag starts with the previous tag's choices plus every "
-    "field you keep above; after that, a tag's choices change only when you change "
-    "them. A card with several protected tags keeps a field if any of them keeps it."
+    "removed from your cards; its sub-tags are covered too. Each protected tag "
+    "also has its own field choices, separate from the Fields list above: open a "
+    "tag to set them. Cards with that tag follow the tag's choices only, whatever "
+    "the Fields list says for other cards. A card with several protected tags "
+    "keeps a field if any of them keeps it."
 )
 KEEP_EVERY_FIELD_LABEL = "Keep every field"
 STYLING_HEADING = "Update card templates and styling"
