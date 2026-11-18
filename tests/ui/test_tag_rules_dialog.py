@@ -449,8 +449,10 @@ BUBBLES = {"fields": FIELDS_INFO, "tags": TAGS_INFO, "styling": STYLING_INFO,
 def test_bubble_texts_are_the_approved_ones():
     assert FIELDS_INFO.startswith("Choose what happens to each field when an update changes a card")
     assert FIELDS_INFO.endswith("unless the update leaves that field empty on every card.")
-    assert TAGS_INFO.startswith("An update replaces a card's tags with the update's.")
-    assert TAGS_INFO.endswith("A card with several protected tags keeps a field if any of them keeps it.")
+    assert TAGS_INFO == (
+        "An update never removes a protected tag. Each tag also has its own field "
+        "choices, which apply to its cards instead of the Fields list above. "
+        "Sub-tags are covered too.")
     assert STYLING_INFO == ("On: an update may replace your card templates and styling with its own. "
                             "Off: yours stay exactly as they are. Card content updates either way.")
     assert SCHEDULING_INFO.endswith("Useful for moving a deck to another computer without syncing.")
